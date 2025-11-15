@@ -3,11 +3,12 @@ import sequelize from '../database/connection.js';
 
 interface ClassAttributes {
   id: number;
-  gradeId: number;
+  cohort: string;
   className: string;
-  academicYear: string;
   classAccount?: string;
   classPassword?: string;
+  graduated?: boolean;
+  graduationYear?: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -18,26 +19,16 @@ const Class = sequelize.define<Model<ClassAttributes>>('Class', {
     primaryKey: true,
     autoIncrement: true,
   },
-  gradeId: {
-    type: DataTypes.INTEGER,
+  cohort: {
+    type: DataTypes.STRING(20),
     allowNull: false,
-    field: 'grade_id',
-    references: {
-      model: 'grades',
-      key: 'id',
-    },
+    comment: '入学年份：2024级',
   },
   className: {
     type: DataTypes.STRING(50),
     allowNull: false,
     field: 'class_name',
     comment: '班级名称：一班、二班',
-  },
-  academicYear: {
-    type: DataTypes.STRING(20),
-    allowNull: false,
-    field: 'academic_year',
-    comment: '学年：2024-2025',
   },
   classAccount: {
     type: DataTypes.STRING(50),
@@ -50,11 +41,22 @@ const Class = sequelize.define<Model<ClassAttributes>>('Class', {
     field: 'class_password',
     comment: '班级密码哈希',
   },
+  graduated: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: '是否已毕业',
+  },
+  graduationYear: {
+    type: DataTypes.STRING(10),
+    field: 'graduation_year',
+    comment: '毕业年份',
+  },
 }, {
   tableName: 'classes',
   indexes: [
-    { fields: ['grade_id'] },
-    { fields: ['academic_year'] },
+    { fields: ['cohort'] },
+    { fields: ['graduated'] },
+    { unique: true, fields: ['cohort', 'class_name'] },
   ],
 });
 

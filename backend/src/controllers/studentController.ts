@@ -3,7 +3,6 @@ import { Op } from 'sequelize';
 import {
   Student,
   Class,
-  Grade,
   StudentClassRelation,
 } from '../models/index.js';
 
@@ -56,13 +55,6 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
           {
             model: Class,
             as: 'class',
-            include: [
-              {
-                model: Grade,
-                as: 'grade',
-                ...(gradeId && { where: { id: parseInt(gradeId as string) } }),
-              },
-            ],
           },
         ],
       },
@@ -97,13 +89,9 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
         currentClass: currentRelation
           ? {
               id: currentRelation.class.id,
+              cohort: currentRelation.class.cohort,
               className: currentRelation.class.className,
-              academicYear: currentRelation.class.academicYear,
-              grade: {
-                id: currentRelation.class.grade.id,
-                gradeName: currentRelation.class.grade.gradeName,
-                gradeLevel: currentRelation.class.grade.gradeLevel,
-              },
+              classAccount: currentRelation.class.classAccount,
             }
           : null,
         currentAcademicYear: currentRelation ? currentRelation.academicYear : null,
@@ -139,12 +127,6 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
             {
               model: Class,
               as: 'class',
-              include: [
-                {
-                  model: Grade,
-                  as: 'grade',
-                },
-              ],
             },
           ],
           order: [['academicYear', 'DESC']],
@@ -165,9 +147,9 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
       currentClass: currentRelation
         ? {
             id: currentRelation.class.id,
+            cohort: currentRelation.class.cohort,
             className: currentRelation.class.className,
-            academicYear: currentRelation.class.academicYear,
-            grade: currentRelation.class.grade,
+            classAccount: currentRelation.class.classAccount,
           }
         : null,
       currentAcademicYear: currentRelation ? currentRelation.academicYear : null,
@@ -259,12 +241,6 @@ export const create = async (req: Request, res: Response): Promise<void> => {
             {
               model: Class,
               as: 'class',
-              include: [
-                {
-                  model: Grade,
-                  as: 'grade',
-                },
-              ],
             },
           ],
         },
@@ -351,12 +327,6 @@ export const update = async (req: Request, res: Response): Promise<void> => {
             {
               model: Class,
               as: 'class',
-              include: [
-                {
-                  model: Grade,
-                  as: 'grade',
-                },
-              ],
             },
           ],
         },
@@ -472,12 +442,6 @@ export const transfer = async (req: Request, res: Response): Promise<void> => {
             {
               model: Class,
               as: 'class',
-              include: [
-                {
-                  model: Grade,
-                  as: 'grade',
-                },
-              ],
             },
           ],
         },

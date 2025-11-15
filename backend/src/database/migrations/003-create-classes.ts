@@ -10,26 +10,15 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       primaryKey: true,
       autoIncrement: true,
     },
-    grade_id: {
-      type: DataTypes.INTEGER,
+    cohort: {
+      type: DataTypes.STRING(20),
       allowNull: false,
-      references: {
-        model: 'grades',
-        key: 'id',
-      },
-      onUpdate: 'CASCADE',
-      onDelete: 'RESTRICT',
-      comment: '年级ID',
+      comment: '入学年份：2024级',
     },
     class_name: {
       type: DataTypes.STRING(50),
       allowNull: false,
-      comment: '班级名称',
-    },
-    academic_year: {
-      type: DataTypes.STRING(20),
-      allowNull: false,
-      comment: '学年',
+      comment: '班级名称：一班、二班',
     },
     class_account: {
       type: DataTypes.STRING(50),
@@ -41,6 +30,17 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       type: DataTypes.STRING(255),
       allowNull: true,
       comment: '班级密码哈希',
+    },
+    graduated: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: '是否已毕业',
+    },
+    graduation_year: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+      comment: '毕业年份',
     },
     created_at: {
       type: DataTypes.DATE,
@@ -55,12 +55,19 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建索引
-  await queryInterface.addIndex('classes', ['grade_id'], {
-    name: 'classes_grade_id_idx',
+  await queryInterface.addIndex('classes', ['cohort'], {
+    name: 'classes_cohort_idx',
   });
 
-  await queryInterface.addIndex('classes', ['academic_year'], {
-    name: 'classes_academic_year_idx',
+  await queryInterface.addIndex('classes', ['graduated'], {
+    name: 'classes_graduated_idx',
+  });
+
+  // 创建唯一约束：同一届同一个班级只能有一个
+  await queryInterface.addConstraint('classes', {
+    fields: ['cohort', 'class_name'],
+    type: 'unique',
+    name: 'classes_cohort_class_name_unique',
   });
 }
 

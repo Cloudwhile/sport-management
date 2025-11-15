@@ -10,10 +10,6 @@ import TeacherClassRelation from './TeacherClassRelation.js';
 
 // 定义关联关系
 
-// Grade - Class (一对多)
-Grade.hasMany(Class, { foreignKey: 'gradeId', as: 'classes' });
-Class.belongsTo(Grade, { foreignKey: 'gradeId', as: 'grade' });
-
 // Student - StudentClassRelation (一对多)
 Student.hasMany(StudentClassRelation, { foreignKey: 'studentId', as: 'classRelations' });
 StudentClassRelation.belongsTo(Student, { foreignKey: 'studentId', as: 'student' });

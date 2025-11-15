@@ -1,24 +1,52 @@
 import express, { Router } from 'express';
 import * as studentController from '../controllers/studentController.js';
+import { authenticate, requireTeacher } from '../middleware/auth.js';
 
 const router: Router = express.Router();
 
-// 获取学生列表
+// 所有学生管理接口都需要认证
+router.use(authenticate);
+
+/**
+ * @route   GET /api/students
+ * @desc    获取学生列表
+ * @access  Private (认证用户)
+ */
 router.get('/', studentController.getAll);
 
-// 获取学生详情
+/**
+ * @route   GET /api/students/:id
+ * @desc    获取学生详情
+ * @access  Private (认证用户)
+ */
 router.get('/:id', studentController.getById);
 
-// 创建学生
-router.post('/', studentController.create);
+/**
+ * @route   POST /api/students
+ * @desc    创建学生
+ * @access  Admin + Teacher
+ */
+router.post('/', requireTeacher, studentController.create);
 
-// 更新学生信息
-router.put('/:id', studentController.update);
+/**
+ * @route   PUT /api/students/:id
+ * @desc    更新学生信息
+ * @access  Admin + Teacher
+ */
+router.put('/:id', requireTeacher, studentController.update);
 
-// 删除学生
-router.delete('/:id', studentController.deleteStudent);
+/**
+ * @route   DELETE /api/students/:id
+ * @desc    删除学生
+ * @access  Admin + Teacher
+ */
+router.delete('/:id', requireTeacher, studentController.deleteStudent);
 
-// 转班操作
-router.post('/:id/transfer', studentController.transfer);
+/**
+ * @route   POST /api/students/:id/transfer
+ * @desc    学生转班操作
+ * @access  Admin + Teacher
+ */
+router.post('/:id/transfer', requireTeacher, studentController.transfer);
 
 export default router;

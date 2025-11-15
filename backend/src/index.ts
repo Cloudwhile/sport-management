@@ -48,6 +48,16 @@ import formRoutes from './routes/forms.js';
 import recordRoutes from './routes/records.js';
 import statisticsRoutes from './routes/statistics.js';
 
+// Swagger文档
+import swaggerUi from 'swagger-ui-express';
+import YAML from 'yamljs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const swaggerDocument = YAML.load(join(__dirname, 'swagger', 'openapi.yaml'));
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/grades', gradeRoutes);
@@ -56,6 +66,12 @@ app.use('/api/students', studentRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/records', recordRoutes);
 app.use('/api/statistics', statisticsRoutes);
+
+// Swagger UI
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: '学校体测系统 API 文档',
+}));
 
 // 404 处理
 app.use((req: Request, res: Response) => {

@@ -5,7 +5,6 @@ import FormTestItem from '../models/FormTestItem.js';
 import Student from '../models/Student.js';
 import StudentClassRelation from '../models/StudentClassRelation.js';
 import Class from '../models/Class.js';
-import Grade from '../models/Grade.js';
 import sequelize from '../database/connection.js';
 import { calculateBatchScores, calculateTotalScore } from '../utils/scoreCalculator.js';
 
@@ -41,9 +40,7 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
     });
 
     // 获取班级信息
-    const classInfo = await Class.findByPk(classId, {
-      include: [Grade]
-    });
+    const classInfo = await Class.findByPk(classId);
 
     if (!classInfo) {
       return res.status(404).json({
@@ -118,8 +115,9 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
         },
         class: {
           id: classInfo.id,
+          cohort: classInfo.cohort,
           className: classInfo.className,
-          grade: classInfo.Grade
+          classAccount: classInfo.classAccount
         },
         students: studentsWithRecords
       }

@@ -1,0 +1,1994 @@
+openapi: 3.0.3
+info:
+  title: 学校体测数据管理系统 API
+  description: |
+    学校体测数据管理系统的RESTful API文档
+
+    ## 核心特性
+    - 🎓 **Cohort设计**: 班级基于入学年份（如"2024级"），支持自动计算当前年级
+    - 📊 **动态年级**: 通过 `calculateGradeLevel(cohort, academicYear)` 动态计算班级在特定学年的年级
+    - 🔄 **学生转班**: 完整的学生-班级关联历史记录
+    - 📝 **表单发布机制**: 灵活的体测表单创建和发布流程
+    - 🎯 **自动评分**: 体测记录提交时自动计算各项分数和总分
+
+    ## 认证方式
+    使用 JWT Bearer Token 进行认证。登录后获取token，在后续请求的Header中携带：
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## 角色权限
+    - **admin**: 管理员（最高权限）
+    - **teacher**: 教师（可管理教学相关数据）
+    - **class**: 班级账号（可录入本班体测数据）
+
+  version: 1.0.0
+  contact:
+    name: AptS Team
+    email: support@example.com
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: 本地开发服务器
+  - url: http://localhost:3000/api
+    description: API基础路径
+
+tags:
+  - name: 认证
+    description: 用户登录、登出、信息查询
+  - name: 用户管理
+    description: 管理员和教师账号管理（需Admin权限）
+  - name: 年级管理
+    description: 年级信息管理
+  - name: 班级管理
+    description: 班级管理（基于Cohort设计）
+  - name: 学生管理
+    description: 学生信息和转班操作
+  - name: 表单管理
+    description: 体测表单创建、发布和管理
+  - name: 体测记录
+    description: 体测数据录入和查询
+  - name: 统计分析
+    description: 多维度数据统计和趋势分析
+  - name: 系统
+    description: 系统健康检查等
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== 认证相关 ====================
+  /api/auth/login:
+    post:
+      tags:
+        - 认证
+      summary: 用户登录
+      description: 支持管理员、教师、班级账号登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  description: 用户名或班级账号
+                  example: admin
+                password:
+                  type: string
+                  format: password
+                  description: 密码
+                  example: admin123
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  token:
+                    type: string
+                    description: JWT token
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/auth/logout:
+    post:
+      tags:
+        - 认证
+      summary: 退出登录
+      description: JWT无状态，主要用于清除前端token
+      responses:
+        '200':
+          description: 登出成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: 登出成功
+
+  /api/auth/me:
+    get:
+      tags:
+        - 认证
+      summary: 获取当前用户信息
+      responses:
+        '200':
+          description: 成功获取用户信息
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ==================== 用户管理 ====================
+  /api/users:
+    get:
+      tags:
+        - 用户管理
+      summary: 获取用户列表
+      description: 需要Admin权限
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [admin, teacher]
+        - name: search
+          in: query
+          description: 搜索用户名或真实姓名
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - 用户管理
+      summary: 创建用户
+      description: 需要Admin权限
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+                - role
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                role:
+                  type: string
+                  enum: [admin, teacher]
+                realName:
+                  type: string
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/User'
+
+  /api/users/{id}:
+    get:
+      tags:
+        - 用户管理
+      summary: 获取用户详情
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    put:
+      tags:
+        - 用户管理
+      summary: 更新用户信息
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                role:
+                  type: string
+                  enum: [admin, teacher]
+                realName:
+                  type: string
+      responses:
+        '200':
+          description: 更新成功
+
+    delete:
+      tags:
+        - 用户管理
+      summary: 删除用户
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 删除成功
+
+  /api/users/{id}/password:
+    put:
+      tags:
+        - 用户管理
+      summary: 修改用户密码
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: 密码修改成功
+
+  /api/users/{id}/classes:
+    get:
+      tags:
+        - 用户管理
+      summary: 获取教师管理的班级列表
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Class'
+
+    post:
+      tags:
+        - 用户管理
+      summary: 为教师分配班级权限
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - classId
+              properties:
+                classId:
+                  type: integer
+      responses:
+        '200':
+          description: 分配成功
+
+  /api/users/{id}/classes/{classId}:
+    delete:
+      tags:
+        - 用户管理
+      summary: 移除教师的班级权限
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/ClassId'
+      responses:
+        '200':
+          description: 移除成功
+
+  # ==================== 年级管理 ====================
+  /api/grades:
+    get:
+      tags:
+        - 年级管理
+      summary: 获取所有年级
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [ASC, DESC]
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Grade'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - 年级管理
+      summary: 创建年级
+      description: 需要Admin或Teacher权限
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gradeName
+                - gradeLevel
+              properties:
+                gradeName:
+                  type: string
+                  example: 一年级
+                gradeLevel:
+                  type: integer
+                  example: 1
+      responses:
+        '201':
+          description: 创建成功
+
+  /api/grades/{id}:
+    get:
+      tags:
+        - 年级管理
+      summary: 获取年级详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Grade'
+
+    put:
+      tags:
+        - 年级管理
+      summary: 更新年级
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gradeName:
+                  type: string
+                gradeLevel:
+                  type: integer
+      responses:
+        '200':
+          description: 更新成功
+
+    delete:
+      tags:
+        - 年级管理
+      summary: 删除年级
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 删除成功
+
+  # ==================== 班级管理 ====================
+  /api/classes:
+    get:
+      tags:
+        - 班级管理
+      summary: 获取所有班级
+      description: |
+        支持多种筛选条件：
+        - cohort: 按入学年份筛选（如"2024级"）
+        - gradeLevel: 按年级等级筛选（动态计算）
+        - academicYear: 指定学年用于计算年级
+        - graduated: 是否已毕业
+      parameters:
+        - name: cohort
+          in: query
+          description: 入学年份，如"2024级"
+          schema:
+            type: string
+        - name: gradeLevel
+          in: query
+          description: 年级等级（1-6）
+          schema:
+            type: integer
+        - name: academicYear
+          in: query
+          description: 学年，如"2024-2025"
+          schema:
+            type: string
+        - name: graduated
+          in: query
+          schema:
+            type: boolean
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Class'
+                        - type: object
+                          properties:
+                            currentGradeLevel:
+                              type: integer
+                              description: 当前年级等级（动态计算）
+                            currentGradeName:
+                              type: string
+                              description: 当前年级名称
+                            currentAcademicYear:
+                              type: string
+                              description: 当前学年
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - 班级管理
+      summary: 创建班级
+      description: |
+        基于Cohort设计创建班级
+        - cohort: 入学年份，如"2024级"
+        - className: 班级名称，如"一班"
+        - 自动生成固定班级账号: class_{入学年份}_{班号}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - cohort
+                - className
+              properties:
+                cohort:
+                  type: string
+                  example: 2024级
+                  description: 入学年份
+                className:
+                  type: string
+                  example: 一班
+                  description: 班级名称
+                schoolYears:
+                  type: integer
+                  default: 3
+                  description: 学制年数
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Class'
+                  initialPassword:
+                    type: string
+                    description: 初始密码
+                    example: '123456'
+
+  /api/classes/{id}:
+    get:
+      tags:
+        - 班级管理
+      summary: 获取班级详情
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+        - name: academicYear
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/Class'
+                      - type: object
+                        properties:
+                          currentGradeLevel:
+                            type: integer
+                          currentGradeName:
+                            type: string
+                          currentAcademicYear:
+                            type: string
+
+    put:
+      tags:
+        - 班级管理
+      summary: 更新班级
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cohort:
+                  type: string
+                className:
+                  type: string
+                graduated:
+                  type: boolean
+                schoolYears:
+                  type: integer
+      responses:
+        '200':
+          description: 更新成功
+
+    delete:
+      tags:
+        - 班级管理
+      summary: 删除班级
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+      responses:
+        '200':
+          description: 删除成功
+
+  /api/classes/{id}/reset-password:
+    post:
+      tags:
+        - 班级管理
+      summary: 重置班级密码
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+      responses:
+        '200':
+          description: 重置成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  newPassword:
+                    type: string
+
+  /api/classes/{id}/students:
+    post:
+      tags:
+        - 班级管理
+      summary: 添加学生到班级
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - studentId
+                - academicYear
+              properties:
+                studentId:
+                  type: integer
+                academicYear:
+                  type: string
+                  example: 2024-2025
+      responses:
+        '200':
+          description: 添加成功
+
+  /api/classes/{id}/students/{studentId}:
+    delete:
+      tags:
+        - 班级管理
+      summary: 从班级移除学生
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+        - $ref: '#/components/parameters/StudentId'
+      responses:
+        '200':
+          description: 移除成功
+
+  # ==================== 学生管理 ====================
+  /api/students:
+    get:
+      tags:
+        - 学生管理
+      summary: 获取学生列表
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+        - name: search
+          in: query
+          description: 搜索姓名或学号
+          schema:
+            type: string
+        - name: classId
+          in: query
+          schema:
+            type: integer
+        - name: gradeId
+          in: query
+          schema:
+            type: integer
+        - name: academicYear
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Student'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - 学生管理
+      summary: 创建学生
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - studentIdNational
+                - studentIdSchool
+                - name
+                - gender
+                - classId
+                - academicYear
+              properties:
+                studentIdNational:
+                  type: string
+                  description: 全国统一学籍号
+                studentIdSchool:
+                  type: string
+                  description: 学校学号
+                name:
+                  type: string
+                gender:
+                  type: string
+                  enum: [male, female]
+                birthDate:
+                  type: string
+                  format: date
+                idCardNumber:
+                  type: string
+                phone:
+                  type: string
+                classId:
+                  type: integer
+                academicYear:
+                  type: string
+      responses:
+        '201':
+          description: 创建成功
+
+  /api/students/{id}:
+    get:
+      tags:
+        - 学生管理
+      summary: 获取学生详情
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Student'
+
+    put:
+      tags:
+        - 学生管理
+      summary: 更新学生信息
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                studentIdNational:
+                  type: string
+                studentIdSchool:
+                  type: string
+                name:
+                  type: string
+                gender:
+                  type: string
+                  enum: [male, female]
+                birthDate:
+                  type: string
+                  format: date
+                idCardNumber:
+                  type: string
+                phone:
+                  type: string
+      responses:
+        '200':
+          description: 更新成功
+
+    delete:
+      tags:
+        - 学生管理
+      summary: 删除学生
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+      responses:
+        '200':
+          description: 删除成功
+
+  /api/students/{id}/transfer:
+    post:
+      tags:
+        - 学生管理
+      summary: 学生转班操作
+      description: |
+        将学生转到新班级
+        - 自动将原班级关系设为非激活
+        - 创建新的班级关系
+        - 保留历史转班记录
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - classId
+                - academicYear
+              properties:
+                classId:
+                  type: integer
+                  description: 目标班级ID
+                academicYear:
+                  type: string
+                  description: 转班学年
+      responses:
+        '200':
+          description: 转班成功
+
+  # ==================== 表单管理 ====================
+  /api/forms:
+    get:
+      tags:
+        - 表单管理
+      summary: 获取所有表单
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          description: 表单状态
+          schema:
+            type: string
+            enum: [draft, published, closed]
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [ASC, DESC]
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PhysicalTestForm'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - 表单管理
+      summary: 创建表单
+      description: 创建体测表单，自动生成默认国标测试项目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - formName
+                - academicYear
+              properties:
+                formName:
+                  type: string
+                  example: 2024年秋季体测
+                academicYear:
+                  type: string
+                  example: 2024-2025
+                testDate:
+                  type: string
+                  format: date
+                startTime:
+                  type: string
+                  format: date-time
+                endTime:
+                  type: string
+                  format: date-time
+                description:
+                  type: string
+      responses:
+        '201':
+          description: 创建成功
+
+  /api/forms/{id}:
+    get:
+      tags:
+        - 表单管理
+      summary: 获取表单详情
+      description: 包含表单的测试项目列表
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/PhysicalTestForm'
+                      - type: object
+                        properties:
+                          testItems:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/FormTestItem'
+
+    put:
+      tags:
+        - 表单管理
+      summary: 更新表单基本信息
+      description: 仅草稿状态可编辑
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                formName:
+                  type: string
+                academicYear:
+                  type: string
+                testDate:
+                  type: string
+                  format: date
+                startTime:
+                  type: string
+                  format: date-time
+                endTime:
+                  type: string
+                  format: date-time
+                description:
+                  type: string
+      responses:
+        '200':
+          description: 更新成功
+
+    delete:
+      tags:
+        - 表单管理
+      summary: 删除表单
+      description: 仅草稿状态可删除
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 删除成功
+
+  /api/forms/{id}/publish:
+    post:
+      tags:
+        - 表单管理
+      summary: 发布表单
+      description: 将表单状态从 draft 改为 published
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 发布成功
+
+  /api/forms/{id}/close:
+    post:
+      tags:
+        - 表单管理
+      summary: 关闭表单
+      description: 将表单状态从 published 改为 closed
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 关闭成功
+
+  /api/forms/{id}/items:
+    get:
+      tags:
+        - 表单管理
+      summary: 获取表单的测试项目
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FormTestItem'
+
+    put:
+      tags:
+        - 表单管理
+      summary: 更新测试项目配置
+      description: 仅草稿状态可编辑
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/FormTestItem'
+      responses:
+        '200':
+          description: 更新成功
+
+  # ==================== 体测记录 ====================
+  /api/records/forms/{formId}/classes/{classId}/students:
+    get:
+      tags:
+        - 体测记录
+      summary: 获取班级学生列表（用于录入）
+      description: 返回班级所有学生及其在指定表单下的体测记录
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: classId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: academicYear
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      form:
+                        type: object
+                      class:
+                        type: object
+                      students:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            student:
+                              $ref: '#/components/schemas/Student'
+                            testItems:
+                              type: array
+                              items:
+                                $ref: '#/components/schemas/FormTestItem'
+                            record:
+                              $ref: '#/components/schemas/PhysicalTestRecord'
+
+  /api/records/forms/{formId}/students/{studentId}/record:
+    get:
+      tags:
+        - 体测记录
+      summary: 获取学生的体测记录详情
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/PhysicalTestRecord'
+
+    post:
+      tags:
+        - 体测记录
+      summary: 创建或更新单个学生的体测记录
+      description: |
+        提交体测数据，系统自动：
+        - 根据学生性别过滤适用的测试项目
+        - 计算各项分数
+        - 计算总分和等级
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - testData
+              properties:
+                testData:
+                  type: object
+                  description: 测试数据（项目代码为key）
+                  example:
+                    height: 165
+                    weight: 55
+                    lung_capacity: 3200
+                    sprint_50m: 8.5
+      responses:
+        '200':
+          description: 保存成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/PhysicalTestRecord'
+
+    delete:
+      tags:
+        - 体测记录
+      summary: 删除体测记录
+      description: 需要Admin或Teacher权限
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 删除成功
+
+  /api/records/forms/{formId}/records/batch:
+    post:
+      tags:
+        - 体测记录
+      summary: 批量保存体测记录
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - records
+              properties:
+                records:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - studentId
+                      - testData
+                    properties:
+                      studentId:
+                        type: integer
+                      testData:
+                        type: object
+      responses:
+        '200':
+          description: 批量保存成功
+
+  # ==================== 统计分析 ====================
+  /api/statistics/overall:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取整体统计数据
+      parameters:
+        - name: academicYear
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      totalStudents:
+                        type: integer
+                      totalClasses:
+                        type: integer
+                      totalForms:
+                        type: integer
+                      totalRecords:
+                        type: integer
+                      yearStats:
+                        type: object
+
+  /api/statistics/forms/{formId}/classes/{classId}:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取班级统计数据
+      description: 统计某表单下某班级的体测数据（及格率、优秀率、平均分等）
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: classId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      class:
+                        $ref: '#/components/schemas/Class'
+                      form:
+                        type: object
+                      stats:
+                        type: object
+                        properties:
+                          totalStudents:
+                            type: integer
+                          completedStudents:
+                            type: integer
+                          completionRate:
+                            type: string
+                          avgScore:
+                            type: string
+                          scoreDistribution:
+                            type: object
+                          genderStats:
+                            type: object
+
+  /api/statistics/forms/{formId}/grades/{gradeLevel}:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取年级统计数据
+      description: |
+        基于gradeLevel动态计算
+        - 获取表单对应学年的所有指定年级的班级
+        - 统计各班级数据和年级整体数据
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: gradeLevel
+          in: path
+          required: true
+          description: 年级等级（1-6）
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+
+  /api/statistics/forms/{formId}:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取表单统计数据（全校）
+      description: |
+        全校统计数据，包括：
+        - 整体平均分、分数分布
+        - 按年级统计（动态计算）
+        - 各项目平均成绩
+      parameters:
+        - name: formId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+
+  /api/statistics/trend:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取历史趋势数据
+      description: |
+        支持多种筛选方式：
+        - classId: 按班级ID
+        - cohort: 按入学年份
+        - gradeLevel: 按年级等级（动态计算）
+      parameters:
+        - name: classId
+          in: query
+          schema:
+            type: integer
+        - name: cohort
+          in: query
+          schema:
+            type: string
+        - name: gradeLevel
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        formId:
+                          type: integer
+                        formName:
+                          type: string
+                        academicYear:
+                          type: string
+                        testDate:
+                          type: string
+                        count:
+                          type: integer
+                        avgScore:
+                          type: string
+
+  /api/statistics/students/{studentId}:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取学生历史体测数据
+      description: 查询某学生的所有历史体测记录
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      student:
+                        $ref: '#/components/schemas/Student'
+                      history:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PhysicalTestRecord'
+
+  /api/statistics/classes/{classId}/history:
+    get:
+      tags:
+        - 统计分析
+      summary: 获取班级历史体测趋势
+      description: 查询某班级的历次体测统计数据
+      parameters:
+        - $ref: '#/components/parameters/ClassId'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      class:
+                        $ref: '#/components/schemas/Class'
+                      history:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            formId:
+                              type: integer
+                            formName:
+                              type: string
+                            academicYear:
+                              type: string
+                            testDate:
+                              type: string
+                            totalCount:
+                              type: integer
+                            avgScore:
+                              type: string
+                            passRate:
+                              type: string
+                            excellentRate:
+                              type: string
+
+  # ==================== 系统端点 ====================
+  /health:
+    get:
+      tags:
+        - 系统
+      summary: 健康检查
+      security: []
+      responses:
+        '200':
+          description: 系统正常
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api:
+    get:
+      tags:
+        - 系统
+      summary: API信息
+      security: []
+      responses:
+        '200':
+          description: API信息
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  version:
+                    type: string
+                  description:
+                    type: string
+
+# ==================== 组件定义 ====================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT Bearer Token认证
+
+        **获取Token**: 调用 `/api/auth/login` 接口获取token
+
+        **使用方式**: 在请求头中添加
+        ```
+        Authorization: Bearer <your_token>
+        ```
+
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: 用户ID
+      schema:
+        type: integer
+
+    ClassId:
+      name: id
+      in: path
+      required: true
+      description: 班级ID
+      schema:
+        type: integer
+
+    StudentId:
+      name: id
+      in: path
+      required: true
+      description: 学生ID
+      schema:
+        type: integer
+
+  responses:
+    Unauthorized:
+      description: 未授权或Token无效
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: string
+                example: 未授权访问
+
+    Forbidden:
+      description: 权限不足
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: string
+                example: 权限不足
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        username:
+          type: string
+          example: admin
+        role:
+          type: string
+          enum: [admin, teacher, class]
+          example: admin
+        realName:
+          type: string
+          example: 系统管理员
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Grade:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        gradeName:
+          type: string
+          example: 一年级
+        gradeLevel:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+
+    Class:
+      type: object
+      description: |
+        班级（基于Cohort设计）
+        - cohort: 入学年份（如"2024级"），是班级的核心标识
+        - 班级账号固定：class_{入学年份}_{班号}
+        - 年级通过 calculateGradeLevel(cohort, academicYear) 动态计算
+      properties:
+        id:
+          type: integer
+          example: 1
+        cohort:
+          type: string
+          example: 2024级
+          description: 入学年份
+        className:
+          type: string
+          example: 一班
+        classAccount:
+          type: string
+          example: class_2024_1
+          description: 固定的班级账号
+        graduated:
+          type: boolean
+          example: false
+          description: 是否已毕业
+        graduationYear:
+          type: string
+          example: '2026'
+          description: 预计毕业年份
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Student:
+      type: object
+      properties:
+        id:
+          type: integer
+        studentIdNational:
+          type: string
+          description: 全国统一学籍号
+          example: '202400000001'
+        studentIdSchool:
+          type: string
+          description: 学校学号
+          example: S0001
+        name:
+          type: string
+          example: 张三
+        gender:
+          type: string
+          enum: [male, female]
+          example: male
+        birthDate:
+          type: string
+          format: date
+        idCardNumber:
+          type: string
+          example: '440101200801010001'
+        phone:
+          type: string
+          example: '13800138000'
+        currentClass:
+          $ref: '#/components/schemas/Class'
+        currentAcademicYear:
+          type: string
+          example: 2024-2025
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PhysicalTestForm:
+      type: object
+      properties:
+        id:
+          type: integer
+        formName:
+          type: string
+          example: 2024年秋季体测
+        academicYear:
+          type: string
+          example: 2024-2025
+        testDate:
+          type: string
+          format: date
+        startTime:
+          type: string
+          format: date-time
+          description: 开始填报时间
+        endTime:
+          type: string
+          format: date-time
+          description: 结束填报时间
+        status:
+          type: string
+          enum: [draft, published, closed]
+          example: published
+          description: |
+            表单状态：
+            - draft: 草稿（可编辑）
+            - published: 已发布（可录入数据）
+            - closed: 已关闭（不可录入）
+        description:
+          type: string
+        createdBy:
+          type: integer
+          description: 创建者用户ID
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    FormTestItem:
+      type: object
+      description: 表单测试项目
+      properties:
+        id:
+          type: integer
+        formId:
+          type: integer
+        itemCode:
+          type: string
+          example: sprint_50m
+          description: 项目代码
+        itemName:
+          type: string
+          example: 50米跑
+        itemUnit:
+          type: string
+          example: 秒
+        genderLimit:
+          type: string
+          nullable: true
+          enum: [null, male, female]
+          description: |
+            性别限制：
+            - null: 通用项目（男女都测）
+            - male: 仅男生
+            - female: 仅女生
+        isRequired:
+          type: boolean
+          example: true
+        sortOrder:
+          type: integer
+          example: 1
+        scoringStandard:
+          type: object
+          description: 评分标准（JSON格式，包含男女不同标准）
+          example:
+            male:
+              excellent: { min: 90, max: 100, condition: '<=7.0' }
+              good: { min: 80, max: 89, condition: '<=7.5' }
+              pass: { min: 60, max: 79, condition: '<=8.5' }
+              fail: { min: 0, max: 59, condition: '>8.5' }
+            female:
+              excellent: { min: 90, max: 100, condition: '<=8.0' }
+              good: { min: 80, max: 89, condition: '<=8.5' }
+              pass: { min: 60, max: 79, condition: '<=9.5' }
+              fail: { min: 0, max: 59, condition: '>9.5' }
+        createdAt:
+          type: string
+          format: date-time
+
+    PhysicalTestRecord:
+      type: object
+      description: 体测记录
+      properties:
+        id:
+          type: integer
+        formId:
+          type: integer
+        studentId:
+          type: integer
+        classId:
+          type: integer
+        testData:
+          type: object
+          description: 测试数据（项目代码为key，数值为value）
+          example:
+            height: 165
+            weight: 55
+            lung_capacity: 3200
+            sprint_50m: 8.5
+            standing_jump: 2.1
+        scores:
+          type: object
+          description: 各项分数（项目代码为key，分数为value）
+          example:
+            lung_capacity: 85
+            sprint_50m: 90
+            standing_jump: 88
+        totalScore:
+          type: number
+          format: decimal
+          example: 87.5
+          description: 总分
+        gradeLevel:
+          type: string
+          example: 良好
+          description: 等级（优秀/良好/及格/不及格）
+        submittedBy:
+          type: string
+          description: 提交人
+        submittedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 100
+          description: 总记录数
+        page:
+          type: integer
+          example: 1
+          description: 当前页码
+        pageSize:
+          type: integer
+          example: 10
+          description: 每页记录数
+        totalPages:
+          type: integer
+          example: 10
+          description: 总页数

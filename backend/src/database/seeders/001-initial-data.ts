@@ -43,27 +43,31 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   ]);
   console.log('✓ 创建年级: 6个');
 
-  // 创建班级（每个年级2个班）
+  // 创建班级（基于cohort，2024级、2023级、2022级各2个班）
   const classPassword = await hashPassword('class123');
   const classes: any[] = [];
+  const cohorts = ['2024级', '2023级', '2022级'];
 
-  for (let gradeId = 1; gradeId <= 6; gradeId++) {
+  for (const cohort of cohorts) {
+    const cohortYear = cohort.replace('级', '');
     classes.push(
       {
-        grade_id: gradeId,
+        cohort: cohort,
         class_name: '一班',
-        academic_year: '2024-2025',
-        class_account: `${gradeId}01`,
+        class_account: `class_${cohortYear}_1`,
         class_password: classPassword,
+        graduated: false,
+        graduation_year: (parseInt(cohortYear) + 2).toString(),
         created_at: new Date(),
         updated_at: new Date(),
       },
       {
-        grade_id: gradeId,
+        cohort: cohort,
         class_name: '二班',
-        academic_year: '2024-2025',
-        class_account: `${gradeId}02`,
+        class_account: `class_${cohortYear}_2`,
         class_password: classPassword,
+        graduated: false,
+        graduation_year: (parseInt(cohortYear) + 2).toString(),
         created_at: new Date(),
         updated_at: new Date(),
       }
@@ -71,7 +75,11 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   }
 
   await queryInterface.bulkInsert('classes', classes);
-  console.log(`✓ 创建班级: ${classes.length}个（账号密码: 101/class123, 102/class123...）`);
+  console.log(`✓ 创建班级: ${classes.length}个`);
+  console.log('  - 2024级一班、二班（账号: class_2024_1, class_2024_2）');
+  console.log('  - 2023级一班、二班（账号: class_2023_1, class_2023_2）');
+  console.log('  - 2022级一班、二班（账号: class_2022_1, class_2022_2）');
+  console.log('  - 统一密码: class123');
 
   // 创建测试学生（前2个班级，每班5个学生）
   const studentNames = ['张三', '李四', '王五', '赵六', '钱七'];
@@ -118,8 +126,9 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   console.log('\n=== 登录账号信息 ===');
   console.log('管理员账号: admin / admin123');
   console.log('教师账号: teacher / teacher123');
-  console.log('班级账号示例: 101 / class123 (一年级一班)');
-  console.log('班级账号示例: 102 / class123 (一年级二班)');
+  console.log('班级账号示例: class_2024_1 / class123 (2024级一班)');
+  console.log('班级账号示例: class_2024_2 / class123 (2024级二班)');
+  console.log('班级账号示例: class_2023_1 / class123 (2023级一班)');
   console.log('==================\n');
 }
 
