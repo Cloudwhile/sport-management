@@ -1,7 +1,7 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../database/connection.js';
 
-interface StudentClassRelationAttributes {
+export interface StudentClassRelationAttributes {
   id: number;
   studentId: number;
   classId: number;

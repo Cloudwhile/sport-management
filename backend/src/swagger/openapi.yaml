@@ -512,7 +512,7 @@ paths:
           schema:
             type: integer
             default: 1
-        - name: limit
+        - name: pageSize
           in: query
           schema:
             type: integer

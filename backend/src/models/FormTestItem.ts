@@ -1,7 +1,7 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../database/connection.js';
 
-interface FormTestItemAttributes {
+export interface FormTestItemAttributes {
   id: number;
   formId: number;
   itemCode: string;

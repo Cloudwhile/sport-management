@@ -1,7 +1,7 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../database/connection.js';
 
-interface PhysicalTestRecordAttributes {
+export interface PhysicalTestRecordAttributes {
   id: number;
   formId: number;
   studentId: number;

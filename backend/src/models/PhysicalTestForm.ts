@@ -1,7 +1,7 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../database/connection.js';
 
-interface PhysicalTestFormAttributes {
+export interface PhysicalTestFormAttributes {
   id: number;
   formName: string;
   academicYear: string;

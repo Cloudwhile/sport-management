@@ -4,7 +4,6 @@ import {
   User,
   TeacherClassRelation,
   Class,
-  Grade,
 } from '../models/index.js';
 import { hashPassword } from '../utils/password.js';
 
@@ -88,12 +87,6 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
           {
             model: Class,
             as: 'class',
-            include: [
-              {
-                model: Grade,
-                as: 'grade',
-              },
-            ],
           },
         ],
       });
@@ -102,9 +95,10 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
         const relData = rel.toJSON();
         return {
           id: relData.class.id,
+          cohort: relData.class.cohort,
           className: relData.class.className,
-          academicYear: relData.class.academicYear,
-          grade: relData.class.grade,
+          classAccount: relData.class.classAccount,
+          graduated: relData.class.graduated,
         };
       });
     }
@@ -325,12 +319,6 @@ export const getTeacherClasses = async (req: Request, res: Response): Promise<vo
         {
           model: Class,
           as: 'class',
-          include: [
-            {
-              model: Grade,
-              as: 'grade',
-            },
-          ],
         },
       ],
     });
@@ -339,10 +327,10 @@ export const getTeacherClasses = async (req: Request, res: Response): Promise<vo
       const relData = rel.toJSON();
       return {
         id: relData.class.id,
+        cohort: relData.class.cohort,
         className: relData.class.className,
-        academicYear: relData.class.academicYear,
-        gradeId: relData.class.gradeId,
-        grade: relData.class.grade,
+        classAccount: relData.class.classAccount,
+        graduated: relData.class.graduated,
         assignedAt: relData.created_at,
       };
     });

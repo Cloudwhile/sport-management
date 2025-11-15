@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import User from '../models/User.js';
 import Class from '../models/Class.js';
-import Grade from '../models/Grade.js';
 import { comparePassword } from '../utils/password.js';
 import { generateToken } from '../utils/jwt.js';
 
@@ -50,13 +49,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     // 尝试从班级表查找
     const classUser = await Class.findOne({
       where: { classAccount: username },
-      include: [
-        {
-          model: Grade,
-          as: 'grade',
-          attributes: ['id', 'gradeName'],
-        },
-      ],
     });
 
     if (!classUser) {
@@ -82,11 +74,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       username: classUser.get('classAccount') as string,
       userType: 'class',
       role: 'class',
-      classId: classUser.get('id') as number,
-      gradeId: classUser.get('gradeId') as number,
     });
 
-    const classGrade = classUser.get('Grade') as any;
     res.json({
       token,
       user: {
@@ -94,10 +83,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         username: classUser.get('classAccount'),
         role: 'class',
         userType: 'class',
+        cohort: classUser.get('cohort'),
         className: classUser.get('className'),
-        gradeId: classUser.get('gradeId'),
-        gradeName: classGrade?.get('gradeName'),
-        academicYear: classUser.get('academicYear'),
+        graduated: classUser.get('graduated'),
       },
     });
   } catch (error) {
@@ -125,31 +113,21 @@ export const getMe = async (req: Request, res: Response): Promise<void> => {
 
     if (userType === 'class') {
       // 班级用户
-      const classUser = await Class.findByPk(id, {
-        include: [
-          {
-            model: Grade,
-            as: 'grade',
-            attributes: ['id', 'gradeName'],
-          },
-        ],
-      });
+      const classUser = await Class.findByPk(id);
 
       if (!classUser) {
         res.status(404).json({ error: '班级不存在' });
         return;
       }
 
-      const classUserGrade = classUser.get('Grade') as any;
       res.json({
         id: classUser.get('id'),
         username: classUser.get('classAccount'),
         role: 'class',
         userType: 'class',
+        cohort: classUser.get('cohort'),
         className: classUser.get('className'),
-        gradeId: classUser.get('gradeId'),
-        gradeName: classUserGrade?.get('gradeName'),
-        academicYear: classUser.get('academicYear'),
+        graduated: classUser.get('graduated'),
       });
       return;
     } else {

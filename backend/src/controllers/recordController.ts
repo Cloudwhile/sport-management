@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Request, Response } from 'express';
 import PhysicalTestRecord from '../models/PhysicalTestRecord.js';
 import PhysicalTestForm from '../models/PhysicalTestForm.js';

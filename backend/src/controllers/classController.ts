@@ -27,7 +27,7 @@ class ClassController {
         academicYear,
         graduated,
         page = 1,
-        limit = 20,
+        pageSize = 10,
       } = req.query;
 
       const where: any = {};
@@ -42,11 +42,12 @@ class ClassController {
         where.graduated = graduated === 'true';
       }
 
-      const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
+      const limit = parseInt(pageSize as string);
+      const offset = (parseInt(page as string) - 1) * limit;
 
       let { count, rows } = await Class.findAndCountAll({
         where,
-        limit: parseInt(limit as string),
+        limit,
         offset,
         order: [
           ['cohort', 'DESC'],
@@ -85,8 +86,8 @@ class ClassController {
         pagination: {
           total: count,
           page: parseInt(page as string),
-          limit: parseInt(limit as string),
-          totalPages: Math.ceil(count / parseInt(limit as string)),
+          pageSize: limit,
+          totalPages: Math.ceil(count / limit),
         },
       });
     } catch (error) {
