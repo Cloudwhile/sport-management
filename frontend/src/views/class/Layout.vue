@@ -1,7 +1,7 @@
 <template>
   <el-container class="layout-container">
     <el-aside width="200px" class="sidebar">
-      <div class="logo">体测系统</div>
+      <div class="logo">{{ classInfo?.className || '班级' }}</div>
       <el-menu
         :default-active="activeMenu"
         router
@@ -9,29 +9,13 @@
         text-color="#bfcbd9"
         active-text-color="#409eff"
       >
-        <el-menu-item index="/admin/dashboard">
-          <el-icon><HomeFilled /></el-icon>
-          <span>首页</span>
+        <el-menu-item index="/class/data-entry">
+          <el-icon><Edit /></el-icon>
+          <span>数据录入</span>
         </el-menu-item>
-        <el-menu-item index="/admin/students">
-          <el-icon><User /></el-icon>
-          <span>学生管理</span>
-        </el-menu-item>
-        <el-menu-item index="/admin/classes">
-          <el-icon><School /></el-icon>
-          <span>班级管理</span>
-        </el-menu-item>
-        <el-menu-item index="/admin/grades">
-          <el-icon><Reading /></el-icon>
-          <span>年级管理</span>
-        </el-menu-item>
-        <el-menu-item index="/admin/forms">
+        <el-menu-item index="/class/records">
           <el-icon><Document /></el-icon>
-          <span>体测表单</span>
-        </el-menu-item>
-        <el-menu-item index="/admin/statistics">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>数据统计</span>
+          <span>录入记录</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -43,7 +27,7 @@
           <el-dropdown @command="handleCommand">
             <span class="user-info">
               <el-icon><User /></el-icon>
-              <span>管理员</span>
+              <span>{{ classInfo?.className || '班级账号' }}</span>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -62,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessageBox } from 'element-plus';
 import { useUserStore } from '@/stores/user';
@@ -71,10 +55,22 @@ const route = useRoute();
 const router = useRouter();
 const userStore = useUserStore();
 
+const classInfo = ref<any>(null);
+
 const activeMenu = computed(() => route.path);
 const pageTitle = computed(() => route.meta.title || '');
 
-const handleCommand = (command) => {
+onMounted(() => {
+  // 获取班级信息
+  const userInfo = userStore.userInfo;
+  if (userInfo) {
+    classInfo.value = {
+      className: userInfo.className || userInfo.username
+    };
+  }
+});
+
+const handleCommand = (command: string) => {
   if (command === 'logout') {
     ElMessageBox.confirm('确认退出登录？', '提示', {
       confirmButtonText: '确定',
@@ -102,7 +98,7 @@ const handleCommand = (command) => {
     height: 60px;
     line-height: 60px;
     text-align: center;
-    font-size: 20px;
+    font-size: 18px;
     font-weight: bold;
     color: #fff;
     background-color: #2b3a4a;

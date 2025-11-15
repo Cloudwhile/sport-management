@@ -1,0 +1,407 @@
+import { Request, Response } from 'express';
+import PhysicalTestRecord from '../models/PhysicalTestRecord.js';
+import PhysicalTestForm from '../models/PhysicalTestForm.js';
+import FormTestItem from '../models/FormTestItem.js';
+import Student from '../models/Student.js';
+import StudentClassRelation from '../models/StudentClassRelation.js';
+import Class from '../models/Class.js';
+import Grade from '../models/Grade.js';
+import sequelize from '../database/connection.js';
+import { calculateBatchScores, calculateTotalScore } from '../utils/scoreCalculator.js';
+
+/**
+ * 获取班级学生列表（用于录入）
+ * 返回班级所有学生及其在指定表单下的体测记录
+ */
+export const getClassStudentsForForm = async (req: Request, res: Response) => {
+  try {
+    const { formId, classId } = req.params;
+    const { academicYear } = req.query;
+
+    // 验证表单是否存在且已发布
+    const form = await PhysicalTestForm.findByPk(formId);
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: '表单不存在'
+      });
+    }
+
+    if (form.status !== 'published') {
+      return res.status(400).json({
+        success: false,
+        message: '表单未发布，无法录入数据'
+      });
+    }
+
+    // 获取表单的测试项目
+    const testItems = await FormTestItem.findAll({
+      where: { formId },
+      order: [['sortOrder', 'ASC']]
+    });
+
+    // 获取班级信息
+    const classInfo = await Class.findByPk(classId, {
+      include: [Grade]
+    });
+
+    if (!classInfo) {
+      return res.status(404).json({
+        success: false,
+        message: '班级不存在'
+      });
+    }
+
+    // 获取该班级在指定学年的所有学生
+    const year = academicYear || form.academicYear;
+    const studentRelations = await StudentClassRelation.findAll({
+      where: {
+        classId,
+        academicYear: year,
+        isActive: true
+      },
+      include: [
+        {
+          model: Student,
+          as: 'student'
+        }
+      ]
+    });
+
+    // 获取这些学生在该表单下的体测记录
+    const studentIds = studentRelations.map(rel => rel.studentId);
+    const records = await PhysicalTestRecord.findAll({
+      where: {
+        formId,
+        studentId: studentIds
+      }
+    });
+
+    // 组织数据：学生 + 对应的记录 + 适用的测试项目
+    const studentsWithRecords = studentRelations.map(relation => {
+      const student = relation.student;
+      const record = records.find(r => r.studentId === student.id);
+
+      // 根据学生性别过滤测试项目
+      const applicableItems = testItems.filter(item => {
+        return item.genderLimit === null || item.genderLimit === student.gender;
+      });
+
+      return {
+        student: {
+          id: student.id,
+          studentIdNational: student.studentIdNational,
+          studentIdSchool: student.studentIdSchool,
+          name: student.name,
+          gender: student.gender,
+          birthDate: student.birthDate
+        },
+        testItems: applicableItems,
+        record: record ? {
+          id: record.id,
+          testData: record.testData,
+          scores: record.scores,
+          totalScore: record.totalScore,
+          submittedAt: record.submittedAt
+        } : null
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        form: {
+          id: form.id,
+          formName: form.formName,
+          academicYear: form.academicYear,
+          testDate: form.testDate
+        },
+        class: {
+          id: classInfo.id,
+          className: classInfo.className,
+          grade: classInfo.Grade
+        },
+        students: studentsWithRecords
+      }
+    });
+  } catch (error: any) {
+    console.error('获取班级学生列表失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取学生列表失败',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * 创建或更新体测记录
+ */
+export const createOrUpdateRecord = async (req: Request, res: Response) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { formId, studentId } = req.params;
+    const { testData } = req.body;
+
+    // 验证表单
+    const form = await PhysicalTestForm.findByPk(formId);
+    if (!form) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: '表单不存在'
+      });
+    }
+
+    if (form.status !== 'published') {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: '表单未发布，无法录入数据'
+      });
+    }
+
+    // 验证学生
+    const student = await Student.findByPk(studentId);
+    if (!student) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: '学生不存在'
+      });
+    }
+
+    // 获取测试项目（根据学生性别过滤）
+    const testItems = await FormTestItem.findAll({
+      where: { formId }
+    });
+
+    const applicableItems = testItems.filter(item => {
+      return item.genderLimit === null || item.genderLimit === student.gender;
+    });
+
+    // 计算各项分数
+    const scores = calculateBatchScores(testData, applicableItems);
+
+    // 计算总分
+    const totalScore = calculateTotalScore(scores);
+
+    // 查找是否已存在记录
+    let record = await PhysicalTestRecord.findOne({
+      where: { formId, studentId }
+    });
+
+    if (record) {
+      // 更新现有记录
+      await record.update(
+        {
+          testData,
+          scores,
+          totalScore,
+          submittedAt: new Date()
+        },
+        { transaction }
+      );
+    } else {
+      // 创建新记录
+      record = await PhysicalTestRecord.create(
+        {
+          formId: Number(formId),
+          studentId: Number(studentId),
+          testData,
+          scores,
+          totalScore,
+          submittedAt: new Date()
+        },
+        { transaction }
+      );
+    }
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message: '保存成功',
+      data: record
+    });
+  } catch (error: any) {
+    await transaction.rollback();
+    console.error('保存体测记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '保存失败',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * 批量保存体测记录
+ */
+export const batchCreateOrUpdateRecords = async (req: Request, res: Response) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { formId } = req.params;
+    const { records } = req.body; // [{ studentId, testData }]
+
+    // 验证表单
+    const form = await PhysicalTestForm.findByPk(formId);
+    if (!form) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: '表单不存在'
+      });
+    }
+
+    if (form.status !== 'published') {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: '表单未发布，无法录入数据'
+      });
+    }
+
+    // 获取测试项目
+    const testItems = await FormTestItem.findAll({
+      where: { formId }
+    });
+
+    const results = [];
+
+    for (const recordData of records) {
+      const { studentId, testData } = recordData;
+
+      // 获取学生信息
+      const student = await Student.findByPk(studentId);
+      if (!student) {
+        continue; // 跳过不存在的学生
+      }
+
+      // 根据性别过滤测试项目
+      const applicableItems = testItems.filter(item => {
+        return item.genderLimit === null || item.genderLimit === student.gender;
+      });
+
+      // 计算分数
+      const scores = calculateBatchScores(testData, applicableItems);
+      const totalScore = calculateTotalScore(scores);
+
+      // 查找或创建记录
+      const [record] = await PhysicalTestRecord.upsert(
+        {
+          formId: Number(formId),
+          studentId: Number(studentId),
+          testData,
+          scores,
+          totalScore,
+          submittedAt: new Date()
+        },
+        { transaction }
+      );
+
+      results.push(record);
+    }
+
+    await transaction.commit();
+
+    res.json({
+      success: true,
+      message: `成功保存 ${results.length} 条记录`,
+      data: results
+    });
+  } catch (error: any) {
+    await transaction.rollback();
+    console.error('批量保存体测记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '批量保存失败',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * 获取学生的体测记录详情
+ */
+export const getStudentRecord = async (req: Request, res: Response) => {
+  try {
+    const { formId, studentId } = req.params;
+
+    const record = await PhysicalTestRecord.findOne({
+      where: { formId, studentId },
+      include: [
+        {
+          model: Student,
+          as: 'student'
+        },
+        {
+          model: PhysicalTestForm,
+          as: 'form',
+          include: [
+            {
+              model: FormTestItem,
+              as: 'testItems',
+              order: [['sortOrder', 'ASC']]
+            }
+          ]
+        }
+      ]
+    });
+
+    if (!record) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到体测记录'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: record
+    });
+  } catch (error: any) {
+    console.error('获取体测记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取记录失败',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * 删除体测记录
+ */
+export const deleteRecord = async (req: Request, res: Response) => {
+  try {
+    const { formId, studentId } = req.params;
+
+    const record = await PhysicalTestRecord.findOne({
+      where: { formId, studentId }
+    });
+
+    if (!record) {
+      return res.status(404).json({
+        success: false,
+        message: '记录不存在'
+      });
+    }
+
+    await record.destroy();
+
+    res.json({
+      success: true,
+      message: '删除成功'
+    });
+  } catch (error: any) {
+    console.error('删除体测记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '删除失败',
+      error: error.message
+    });
+  }
+};

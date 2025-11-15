@@ -37,7 +37,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
@@ -76,7 +76,7 @@ const handleLogin = async () => {
     if (role === 'admin' || role === 'teacher') {
       router.push('/admin');
     } else if (role === 'class') {
-      router.push('/admin'); // 班级也跳转到管理页面，但会有不同的权限
+      router.push('/class');
     }
   } catch (error) {
     console.error('登录失败:', error);

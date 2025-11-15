@@ -9,7 +9,7 @@
               <el-icon :size="30"><User /></el-icon>
             </div>
             <div class="stat-info">
-              <div class="stat-value">0</div>
+              <div class="stat-value">{{ stats.totalStudents }}</div>
               <div class="stat-label">学生总数</div>
             </div>
           </div>
@@ -22,7 +22,7 @@
               <el-icon :size="30"><School /></el-icon>
             </div>
             <div class="stat-info">
-              <div class="stat-value">0</div>
+              <div class="stat-value">{{ stats.totalClasses }}</div>
               <div class="stat-label">班级总数</div>
             </div>
           </div>
@@ -35,7 +35,7 @@
               <el-icon :size="30"><Document /></el-icon>
             </div>
             <div class="stat-info">
-              <div class="stat-value">0</div>
+              <div class="stat-value">{{ stats.totalForms }}</div>
               <div class="stat-label">体测表单</div>
             </div>
           </div>
@@ -48,7 +48,7 @@
               <el-icon :size="30"><DataAnalysis /></el-icon>
             </div>
             <div class="stat-info">
-              <div class="stat-value">0</div>
+              <div class="stat-value">{{ stats.totalRecords }}</div>
               <div class="stat-label">测试记录</div>
             </div>
           </div>
@@ -58,8 +58,31 @@
   </div>
 </template>
 
-<script setup>
-// TODO: 获取统计数据
+<script setup lang="ts">
+import { ref, onMounted } from 'vue';
+import { getOverallStats } from '@/api/statistics';
+
+const stats = ref({
+  totalStudents: 0,
+  totalClasses: 0,
+  totalForms: 0,
+  totalRecords: 0
+});
+
+const fetchStats = async () => {
+  try {
+    const res = await getOverallStats();
+    if (res.success) {
+      stats.value = res.data;
+    }
+  } catch (error) {
+    console.error('获取统计数据失败:', error);
+  }
+};
+
+onMounted(() => {
+  fetchStats();
+});
 </script>
 
 <style scoped lang="scss">

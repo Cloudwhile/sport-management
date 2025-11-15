@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* 生产构建优化 */
+    "sourceMap": false,
+    "declaration": false,
+    "declarationMap": false,
+    "removeComments": true
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "src/database/seed.ts"
+  ]
+}
