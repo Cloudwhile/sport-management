@@ -40,6 +40,7 @@ app.get('/api', (req: Request, res: Response) => {
 
 // 导入并使用路由
 import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
 import gradeRoutes from './routes/grades.js';
 import classRoutes from './routes/classes.js';
 import studentRoutes from './routes/students.js';
@@ -48,6 +49,7 @@ import recordRoutes from './routes/records.js';
 import statisticsRoutes from './routes/statistics.js';
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/grades', gradeRoutes);
 app.use('/api/classes', classRoutes);
 app.use('/api/students', studentRoutes);
