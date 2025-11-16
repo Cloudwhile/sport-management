@@ -56,7 +56,7 @@ WORKDIR /app
 # 安装生产依赖和构建工具（需要 tsx 用于执行迁移脚本）
 COPY backend/package*.json ./
 RUN npm ci --only=production && \
-    npm install tsx --save-dev
+    npm install -g tsx
 
 # 从构建阶段复制编译后的文件
 COPY --from=backend-builder /app/backend/dist ./dist
