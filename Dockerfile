@@ -48,12 +48,15 @@ WORKDIR /app
 
 # 安装生产依赖和构建工具（需要 tsx 用于执行迁移脚本）
 COPY backend/package*.json ./
-COPY backend/src/database/ ./src/database/
 RUN npm ci --only=production && \
     npm install tsx --save-dev
 
 # 从构建阶段复制编译后的文件
 COPY --from=backend-builder /app/backend/dist ./dist
+
+# 复制源代码（用于数据库迁移脚本）
+COPY --from=backend-builder /app/backend/src ./src
+COPY --from=backend-builder /app/backend/tsconfig.json ./tsconfig.json
 
 # 创建非 root 用户
 RUN addgroup -g 1001 -S nodejs && \
