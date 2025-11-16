@@ -130,6 +130,18 @@ export interface StudentWithClass extends Student {
   classes?: Class[];
 }
 
+// 学生带体测记录（用于录入数据页面）
+export interface StudentWithRecord extends Student {
+  _record?: {
+    id: number;
+    testData: Record<string, any>;
+    scores: Record<string, number>;
+    totalScore: number;
+    gradeLevel: string;
+    submittedAt: string;
+  } | null;
+}
+
 export interface PhysicalTestRecordWithDetails extends PhysicalTestRecord {
   student?: Student;
   class?: Class;
@@ -145,4 +157,5 @@ export interface PhysicalTestFormWithItems extends PhysicalTestForm {
 export interface ClassWithStudents extends Class {
   students?: Student[];
   studentCount?: number;
+  currentGradeName?: string; // 当前年级名称
 }

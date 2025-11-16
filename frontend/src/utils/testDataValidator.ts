@@ -220,7 +220,7 @@ export function timeToSeconds(timeStr: string | number): number | null {
 
   // 时间格式（2:23 或 2'23）
   const match = str.match(/^(\d+)[':](\d+)$/)
-  if (match) {
+  if (match && match[1] && match[2]) {
     const minutes = parseInt(match[1], 10)
     const seconds = parseInt(match[2], 10)
 

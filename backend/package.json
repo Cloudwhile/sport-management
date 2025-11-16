@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:backend && npm run build:frontend",
+    "build:backend": "tsc -p tsconfig.build.json && cp -r src/swagger dist/",
+    "build:frontend": "cd ../frontend && npm run build && mkdir -p ../backend/dist/frontend && cp -r dist/* ../backend/dist/frontend/",
     "build:dev": "tsc",
     "type-check": "tsc --noEmit",
     "db:migrate": "tsx src/database/migrator.ts up",

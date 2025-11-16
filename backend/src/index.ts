@@ -10,7 +10,23 @@ import { migrator } from './database/umzug.js';
 const app: Application = express();
 
 // 中间件
-app.use(helmet());
+// 配置 helmet，允许加载静态资源
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(cors(config.cors));
 app.use(morgan(config.app.env === 'development' ? 'dev' : 'combined'));
 app.use(express.json());
@@ -73,9 +89,26 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
   customSiteTitle: '学校体测系统 API 文档',
 }));
 
-// 404 处理
-app.use((req: Request, res: Response) => {
-  res.status(404).json({ error: '接口不存在' });
+// 静态文件服务（前端构建文件）
+import path from 'path';
+// 生产环境：从 dist/frontend 读取
+// 开发环境：从 ../../frontend/dist 读取
+const frontendPath = config.app.env === 'production'
+  ? path.join(__dirname, 'frontend')
+  : path.join(__dirname, '../../frontend/dist');
+
+app.use(express.static(frontendPath));
+
+// SPA 路由处理：所有非 API 请求都返回 index.html
+// 这样前端的 Vue Router 就可以处理路由了
+app.get('*', (req: Request, res: Response): void => {
+  // 如果是 API 请求但没有匹配到路由，返回 404
+  if (req.path.startsWith('/api')) {
+    res.status(404).json({ error: '接口不存在' });
+    return;
+  }
+  // 其他所有请求返回前端 index.html
+  res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 // 错误处理

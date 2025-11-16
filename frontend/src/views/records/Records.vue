@@ -10,6 +10,7 @@ import type {
   PhysicalTestFormWithItems,
   Class,
   Student,
+  StudentWithRecord,
   FormTestItem,
   Gender
 } from '@/types'
@@ -175,7 +176,7 @@ const fetchClassesProgress = async () => {
   // 并发获取所有班级的进度
   const progressPromises = eligibleClasses.map(async (cls) => {
     try {
-      const studentsData = await recordsAPI.getClassStudentsForForm(
+      const studentsData: StudentWithRecord[] = await recordsAPI.getClassStudentsForForm(
         selectedForm.value!.id,
         cls.id
       )
@@ -363,6 +364,8 @@ const searchStudent = () => {
 
   // 跳转到目标学生
   const targetStudent = matched[currentMatchIndex.value]
+  if (!targetStudent) return
+
   highlightedStudentId.value = targetStudent.id
 
   // 显示提示信息
@@ -454,13 +457,13 @@ const selectClass = async (classItem: Class) => {
 
     // 获取该班级的学生列表（已包含体测记录）
     if (selectedForm.value) {
-      const studentsData = await recordsAPI.getClassStudentsForForm(
+      const studentsData: StudentWithRecord[] = await recordsAPI.getClassStudentsForForm(
         selectedForm.value.id,
         classItem.id
       )
 
       // 处理返回的数据，提取学生信息和已有记录
-      students.value = studentsData.map((item: any) => ({
+      students.value = studentsData.map((item) => ({
         id: item.id,
         studentIdNational: item.studentIdNational,
         studentIdSchool: item.studentIdSchool,
@@ -473,7 +476,7 @@ const selectClass = async (classItem: Class) => {
       existingRecordsMap.value.clear()
       testDataMap.value.clear()
 
-      studentsData.forEach((item: any) => {
+      studentsData.forEach((item) => {
         if (item._record) {
           // 有记录：设置到 map 中
           existingRecordsMap.value.set(item.id, item._record)
@@ -612,7 +615,7 @@ const submitAllData = async () => {
     lastSaveTime.value = null
 
     // 重新获取所有记录（使用批量接口）
-    const studentsData = await recordsAPI.getClassStudentsForForm(
+    const studentsData: StudentWithRecord[] = await recordsAPI.getClassStudentsForForm(
       selectedForm.value.id,
       selectedClass.value.id
     )
@@ -621,7 +624,7 @@ const submitAllData = async () => {
     existingRecordsMap.value.clear()
     testDataMap.value.clear()
 
-    studentsData.forEach((item: any) => {
+    studentsData.forEach((item) => {
       if (item._record) {
         // 有记录：保存到 existingRecordsMap，并用服务器返回的数据填充 testDataMap
         existingRecordsMap.value.set(item.id, item._record)

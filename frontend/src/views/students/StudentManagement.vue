@@ -379,7 +379,7 @@ const openBatchImportModal = () => {
 const handleFileSelect = (event: Event) => {
   const target = event.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
-    selectedFile.value = target.files[0]
+    selectedFile.value = target.files[0] || null
   }
 }
 
@@ -408,6 +408,8 @@ const handleDrop = (event: DragEvent) => {
   const files = event.dataTransfer?.files
   if (files && files.length > 0) {
     const file = files[0]
+    if (!file) return
+
     // 检查文件类型
     const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']
     const validExtensions = ['.xlsx', '.xls']
