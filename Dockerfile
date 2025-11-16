@@ -9,6 +9,13 @@ COPY frontend/package*.json ./
 # 安装前端依赖（包括开发依赖，用于构建）
 RUN npm ci
 
+ARG VITE_APP_TITLE="学校体测数据管理系统"
+ARG VITE_API_BASE_URL="/api"
+
+# 设置构建时环境变量
+ENV VITE_APP_TITLE=${VITE_APP_TITLE} \
+    VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
 # 复制前端源代码
 COPY frontend/ ./
 
