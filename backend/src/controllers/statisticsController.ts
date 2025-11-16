@@ -167,32 +167,54 @@ export const getClassStats = async (req: Request, res: Response) => {
       ? femaleRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0) / femaleRecords.length
       : 0;
 
+    // 获取表单的测试项目，用于计算项目统计
+    const testItems = await FormTestItem.findAll({
+      where: { formId },
+      order: [['sortOrder', 'ASC']]
+    });
+
+    // 各项目平均成绩
+    const itemSummaries: any[] = [];
+    for (const item of testItems) {
+      const itemScores: number[] = [];
+
+      records.forEach(record => {
+        const scores = record.scores as Record<string, any>;
+        if (scores && scores[item.itemCode] != null) {
+          itemScores.push(Number(scores[item.itemCode]));
+        }
+      });
+
+      const itemAvg = itemScores.length > 0
+        ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
+        : 0;
+
+      // 计算及格率（假设60分及格）
+      const passCount = itemScores.filter(s => s >= 60).length;
+      const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
+
+      const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
+      const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
+
+      itemSummaries.push({
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        averageScore: Number(itemAvg.toFixed(2)),
+        passRate: Number(passRate.toFixed(2)),
+        maxValue: Number(maxValue.toFixed(2)),
+        minValue: Number(minValue.toFixed(2))
+      });
+    }
+
     res.json({
       success: true,
       data: {
-        class: classInfo,
-        form: {
-          id: form.id,
-          formName: form.formName,
-          academicYear: form.academicYear
-        },
-        stats: {
-          totalStudents,
-          completedStudents,
-          completionRate: totalStudents > 0 ? (completedStudents / totalStudents * 100).toFixed(2) : 0,
-          avgScore: avgScore.toFixed(2),
-          scoreDistribution,
-          genderStats: {
-            male: {
-              count: maleRecords.length,
-              avgScore: maleAvg.toFixed(2)
-            },
-            female: {
-              count: femaleRecords.length,
-              avgScore: femaleAvg.toFixed(2)
-            }
-          }
-        }
+        totalStudents,
+        submittedCount: completedStudents,
+        submissionRate: totalStudents > 0 ? Number((completedStudents / totalStudents).toFixed(4)) : 0,
+        averageScore: Number(avgScore.toFixed(2)),
+        gradeDistribution: scoreDistribution,
+        itemSummaries
       }
     });
   } catch (error: any) {
@@ -285,24 +307,92 @@ export const getGradeStats = async (req: Request, res: Response) => {
     const totalScore = allRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
     const avgScore = allRecords.length > 0 ? totalScore / allRecords.length : 0;
 
+    // 计算年级学生总数
+    const totalStudents = await StudentClassRelation.count({
+      where: {
+        classId: {
+          [Op.in]: classIds
+        },
+        academicYear: form.academicYear,
+        isActive: true
+      }
+    });
+
+    // 分数分布
+    const scoreDistribution = {
+      excellent: 0,
+      good: 0,
+      pass: 0,
+      fail: 0
+    };
+
+    allRecords.forEach(record => {
+      const score = Number(record.totalScore) || 0;
+      if (score >= 90) scoreDistribution.excellent++;
+      else if (score >= 80) scoreDistribution.good++;
+      else if (score >= 60) scoreDistribution.pass++;
+      else scoreDistribution.fail++;
+    });
+
+    // 获取测试项目
+    const testItems = await FormTestItem.findAll({
+      where: { formId },
+      order: [['sortOrder', 'ASC']]
+    });
+
+    // 各项目平均成绩
+    const itemSummaries: any[] = [];
+    for (const item of testItems) {
+      const itemScores: number[] = [];
+
+      allRecords.forEach(record => {
+        const scores = record.scores as Record<string, any>;
+        if (scores && scores[item.itemCode] != null) {
+          itemScores.push(Number(scores[item.itemCode]));
+        }
+      });
+
+      const itemAvg = itemScores.length > 0
+        ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
+        : 0;
+
+      const passCount = itemScores.filter(s => s >= 60).length;
+      const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
+
+      const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
+      const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
+
+      itemSummaries.push({
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        averageScore: Number(itemAvg.toFixed(2)),
+        passRate: Number(passRate.toFixed(2)),
+        maxValue: Number(maxValue.toFixed(2)),
+        minValue: Number(minValue.toFixed(2))
+      });
+    }
+
+    // 转换班级统计格式
+    const classSummaries = classStats.map(cls => ({
+      classId: cls.classId,
+      className: `${cls.cohort} ${cls.className}`,
+      totalStudents: cls.totalStudents,
+      submittedCount: cls.completedStudents,
+      averageScore: Number(cls.avgScore),
+      passRate: 0, // 需要计算
+      excellentRate: 0 // 需要计算
+    }));
+
     res.json({
       success: true,
       data: {
-        grade: {
-          gradeLevel: targetGradeLevel,
-          academicYear: form.academicYear,
-          gradeName: `${targetGradeLevel}年级`
-        },
-        form: {
-          id: form.id,
-          formName: form.formName,
-          academicYear: form.academicYear
-        },
-        overall: {
-          totalRecords: allRecords.length,
-          avgScore: avgScore.toFixed(2)
-        },
-        classes: classStats
+        totalStudents,
+        submittedCount: allRecords.length,
+        submissionRate: totalStudents > 0 ? Number((allRecords.length / totalStudents).toFixed(4)) : 0,
+        averageScore: Number(avgScore.toFixed(2)),
+        gradeDistribution: scoreDistribution,
+        classSummaries,
+        itemSummaries
       }
     });
   } catch (error: any) {
@@ -433,22 +523,98 @@ export const getFormStats = async (req: Request, res: Response) => {
       }
     }
 
+    // 获取应该参与测试的学生总数
+    const allClasses = await Class.findAll();
+    const participatingClasses = allClasses.filter(cls => {
+      return form.participatingCohorts && form.participatingCohorts.includes(cls.cohort);
+    });
+    const participatingClassIds = participatingClasses.map(c => c.id);
+
+    const totalStudents = await StudentClassRelation.count({
+      where: {
+        classId: {
+          [Op.in]: participatingClassIds
+        },
+        academicYear: form.academicYear,
+        isActive: true
+      }
+    });
+
+    // 按班级统计
+    const classSummaries: any[] = [];
+    for (const classInfo of participatingClasses) {
+      const classRecords = records.filter(r => r.classId === classInfo.id);
+
+      const classStudentCount = await StudentClassRelation.count({
+        where: {
+          classId: classInfo.id,
+          academicYear: form.academicYear,
+          isActive: true
+        }
+      });
+
+      const classTotal = classRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
+      const classAvg = classRecords.length > 0 ? classTotal / classRecords.length : 0;
+
+      const passCount = classRecords.filter(r => Number(r.totalScore) >= 60).length;
+      const excellentCount = classRecords.filter(r => Number(r.totalScore) >= 90).length;
+
+      classSummaries.push({
+        classId: classInfo.id,
+        className: `${classInfo.cohort} ${classInfo.className}`,
+        totalStudents: classStudentCount,
+        submittedCount: classRecords.length,
+        averageScore: Number(classAvg.toFixed(2)),
+        passRate: Number((classRecords.length > 0 ? (passCount / classRecords.length * 100) : 0).toFixed(2)),
+        excellentRate: Number((classRecords.length > 0 ? (excellentCount / classRecords.length * 100) : 0).toFixed(2))
+      });
+    }
+
+    // 各项目平均成绩
+    const itemSummaries: any[] = [];
+    if (form.items) {
+      for (const item of form.items) {
+        const itemScores: number[] = [];
+
+        records.forEach(record => {
+          const scores = record.scores as Record<string, any>;
+          if (scores && scores[item.itemCode] != null) {
+            itemScores.push(Number(scores[item.itemCode]));
+          }
+        });
+
+        const itemAvg = itemScores.length > 0
+          ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
+          : 0;
+
+        // 计算及格率（假设60分及格）
+        const passCount = itemScores.filter(s => s >= 60).length;
+        const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
+
+        const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
+        const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
+
+        itemSummaries.push({
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          averageScore: Number(itemAvg.toFixed(2)),
+          passRate: Number(passRate.toFixed(2)),
+          maxValue: Number(maxValue.toFixed(2)),
+          minValue: Number(minValue.toFixed(2))
+        });
+      }
+    }
+
     res.json({
       success: true,
       data: {
-        form: {
-          id: form.id,
-          formName: form.formName,
-          academicYear: form.academicYear,
-          testDate: form.testDate
-        },
-        overall: {
-          totalRecords: records.length,
-          avgScore: avgScore.toFixed(2),
-          scoreDistribution
-        },
-        gradeStats,
-        itemStats
+        totalStudents,
+        submittedCount: records.length,
+        submissionRate: totalStudents > 0 ? Number((records.length / totalStudents).toFixed(4)) : 0,
+        averageScore: Number(avgScore.toFixed(2)),
+        gradeDistribution: scoreDistribution,
+        classSummaries,
+        itemSummaries
       }
     });
   } catch (error: any) {

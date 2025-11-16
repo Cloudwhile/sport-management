@@ -1,6 +1,6 @@
 import { DataTypes } from 'sequelize';
 import type { MigrationFn } from 'umzug';
-import type { MigrationContext } from '../migrator.js';
+import type { MigrationContext } from '../umzug.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;

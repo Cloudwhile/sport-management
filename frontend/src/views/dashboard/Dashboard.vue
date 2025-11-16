@@ -161,7 +161,7 @@
         <div class="ml-3">
           <h3 class="text-sm font-medium text-blue-800">系统提示</h3>
           <div class="mt-2 text-sm text-blue-700">
-            <p>欢迎使用学校体测数据管理系统！当前系统中已有 {{ overallStats?.totalStudents || 0 }} 名学生和 {{ overallStats?.totalClasses || 0 }} 个班级。</p>
+            <p>欢迎使用{{ appTitle }}！当前系统中已有 {{ overallStats?.totalStudents || 0 }} 名学生和 {{ overallStats?.totalClasses || 0 }} 个班级。</p>
             <p class="mt-1">请通过上方快捷操作开始使用系统功能。</p>
           </div>
         </div>
@@ -197,6 +197,9 @@ const router = useRouter()
 const authStore = useAuthStore()
 const user = computed(() => authStore.user)
 const isAdmin = computed(() => authStore.isAdmin)
+
+// 获取应用标题
+const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
 const isTeacher = computed(() => authStore.isTeacher)
 
 // State

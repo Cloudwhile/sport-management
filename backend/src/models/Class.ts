@@ -47,6 +47,7 @@ const Class = sequelize.define<ClassInstance>('Class', {
     comment: '班级密码哈希',
   },
   // 虚拟字段：根据 cohort 自动计算是否已毕业
+  // @ts-ignore - Virtual field not in attributes
   graduated: {
     type: DataTypes.VIRTUAL,
     get(this: ClassInstance) {
@@ -55,6 +56,7 @@ const Class = sequelize.define<ClassInstance>('Class', {
     },
   },
   // 虚拟字段：根据 cohort 自动计算毕业年份
+  // @ts-ignore - Virtual field not in attributes
   graduationYear: {
     type: DataTypes.VIRTUAL,
     get(this: ClassInstance) {

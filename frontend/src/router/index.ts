@@ -14,6 +14,7 @@ const StudentManagement = () => import('@/views/students/StudentManagement.vue')
 const FormManagement = () => import('@/views/forms/Forms.vue')
 const RecordManagement = () => import('@/views/records/Records.vue')
 const Statistics = () => import('@/views/statistics/Statistics.vue')
+const About = () => import('@/views/about/About.vue')
 
 // 路由配置
 const routes: RouteRecordRaw[] = [
@@ -103,6 +104,14 @@ const routes: RouteRecordRaw[] = [
           roles: [UserRole.ADMIN, UserRole.TEACHER],
           title: '统计分析'
         }
+      },
+      {
+        path: 'about',
+        name: 'About',
+        component: About,
+        meta: {
+          title: '关于我们'
+        }
       }
     ]
   },
@@ -123,11 +132,12 @@ router.beforeEach(authGuard)
 
 // 设置页面标题
 router.afterEach((to) => {
+  const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
   const title = to.meta.title as string
   if (title) {
-    document.title = `${title} - 学校体测数据管理系统`
+    document.title = `${title} - ${appTitle}`
   } else {
-    document.title = '学校体测数据管理系统'
+    document.title = appTitle
   }
 })
 

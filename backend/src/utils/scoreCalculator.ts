@@ -57,14 +57,16 @@ export const calculateBMI = (height: number, weight: number): number => {
 /**
  * 根据评分标准计算单项分数
  * @param value 测试值（数字或时间字符串）
- * @param scoringStandard 评分标准（支持male/female分组）
+ * @param scoringStandard 评分标准（支持male/female分组和年级分组）
  * @param gender 学生性别
+ * @param gradeLevel 学生年级（1-6）
  * @returns 分数，如果无法计算返回null
  */
 export const calculateScore = (
   value: number | string | null | undefined,
   scoringStandard: ScoringStandard | null | undefined,
-  gender: Gender
+  gender: Gender,
+  gradeLevel?: number | null
 ): number | null => {
   if (value == null || !scoringStandard) {
     return null;
@@ -85,7 +87,20 @@ export const calculateScore = (
     return null;
   }
 
-  // 将性别标准的对象转换为数组
+  // 检查是否有年级分组（grade1, grade2, grade3等）
+  if (gradeLevel && genderStandard[`grade${gradeLevel}`]) {
+    // 使用年级特定的评分标准
+    const gradeStandard = genderStandard[`grade${gradeLevel}`];
+    const ranges = Object.values(gradeStandard);
+
+    if (!Array.isArray(ranges) || ranges.length === 0) {
+      return null;
+    }
+
+    return matchRanges(value, ranges, scoringStandard.type);
+  }
+
+  // 兼容旧格式：没有年级分组，直接使用性别分组
   const ranges = Object.values(genderStandard);
 
   // 确保ranges是数组
@@ -177,6 +192,7 @@ const matchRanges = (
  * @param testData 测试数据 { itemCode: value }
  * @param testItems 测试项目配置数组
  * @param gender 学生性别
+ * @param gradeLevel 学生年级（1-6）
  * @returns 计算后的分数数据 { itemCode: score }
  */
 export const calculateBatchScores = (
@@ -186,7 +202,8 @@ export const calculateBatchScores = (
     itemName?: string;
     scoringStandard?: any;
   }>,
-  gender: Gender
+  gender: Gender,
+  gradeLevel?: number | null
 ): Record<string, number | null> => {
   const scores: Record<string, number | null> = {};
 
@@ -194,11 +211,12 @@ export const calculateBatchScores = (
     const value = testData[item.itemCode];
 
     try {
-      scores[item.itemCode] = calculateScore(value, item.scoringStandard, gender);
+      scores[item.itemCode] = calculateScore(value, item.scoringStandard, gender, gradeLevel);
     } catch (error) {
       console.error(`计算 ${item.itemName || item.itemCode} 分数失败:`, error);
       console.error('评分标准:', JSON.stringify(item.scoringStandard, null, 2));
       console.error('测试值:', value);
+      console.error('年级:', gradeLevel);
       scores[item.itemCode] = null;
     }
   }

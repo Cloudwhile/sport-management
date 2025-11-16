@@ -719,7 +719,6 @@ onMounted(() => {
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">排序</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目编码</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目名称</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">单位</th>
                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">性别限制</th>
@@ -730,9 +729,6 @@ onMounted(() => {
               <tr v-for="item in testItems" :key="item.id">
                 <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                   {{ item.sortOrder }}
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                  {{ item.itemCode }}
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                   {{ item.itemName }}

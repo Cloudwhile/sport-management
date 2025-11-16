@@ -9,6 +9,7 @@ import Class from '../models/Class.js';
 import sequelize from '../database/connection.js';
 import { calculateBatchScores, calculateTotalScore, calculateBMI, calculateGradeLevel } from '../utils/scoreCalculator.js';
 import { canClassParticipate, getCohortsDisplay } from '../utils/cohortHelper.js';
+import { calculateGradeLevel as calculateStudentGradeLevel } from '../utils/gradeHelper.js';
 
 /**
  * 获取班级学生列表（用于录入）
@@ -89,17 +90,12 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
         })
       : [];
 
-    // 组织数据：将学生信息展平，testItems 和 record 作为附加字段
+    // 组织数据：学生列表和记录数据
     const studentsWithRecords = studentRelations.map(relation => {
       const student = relation.student;
       const record = records.find(r => r.studentId === student.id);
 
-      // 根据学生性别过滤测试项目
-      const applicableItems = testItems.filter(item => {
-        return item.genderLimit === null || item.genderLimit === student.gender;
-      });
-
-      // 展平结构：学生属性在顶层，testItems 和 record 作为额外字段
+      // 展平结构：学生属性在顶层，record 作为额外字段
       return {
         id: student.id,
         studentIdNational: student.studentIdNational,
@@ -107,7 +103,6 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
         name: student.name,
         gender: student.gender,
         birthDate: student.birthDate,
-        _testItems: applicableItems,
         _record: record ? {
           id: record.id,
           testData: record.testData,
@@ -121,7 +116,18 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: studentsWithRecords
+      data: studentsWithRecords,
+      testItems: testItems.map(item => ({
+        id: item.id,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        itemUnit: item.itemUnit,
+        genderLimit: item.genderLimit,
+        isRequired: item.isRequired,
+        isCalculated: item.isCalculated,
+        sortOrder: item.sortOrder,
+        validationRules: item.validationRules
+      }))
     });
   } catch (error: any) {
     console.error('获取班级学生列表失败:', error);
@@ -200,8 +206,15 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
       }
     }
 
-    // 计算各项分数（传入学生性别）
-    const scores = calculateBatchScores(testData, applicableItems, student.gender);
+    // 获取学生所在班级信息以计算年级
+    const classInfo = await Class.findByPk(classId);
+    let studentGradeLevel: number | null = null;
+    if (classInfo) {
+      studentGradeLevel = calculateStudentGradeLevel(classInfo.cohort, form.academicYear);
+    }
+
+    // 计算各项分数（传入学生性别和年级）
+    const scores = calculateBatchScores(testData, applicableItems, student.gender, studentGradeLevel);
 
     // 计算加权总分
     const totalScore = calculateTotalScore(scores, applicableItems);
@@ -316,6 +329,13 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
         return item.genderLimit === null || item.genderLimit === student.gender;
       });
 
+      // 获取学生所在班级信息以计算年级
+      const classInfo = await Class.findByPk(classId);
+      let studentGradeLevel: number | null = null;
+      if (classInfo) {
+        studentGradeLevel = calculateStudentGradeLevel(classInfo.cohort, form.academicYear);
+      }
+
       // 自动计算BMI（如果提供了身高和体重）
       if (testData.height && testData.weight) {
         try {
@@ -327,13 +347,13 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
         }
       }
 
-      // 计算分数（传入学生性别）
-      const scores = calculateBatchScores(testData, applicableItems, student.gender);
+      // 计算分数（传入学生性别和年级）
+      const scores = calculateBatchScores(testData, applicableItems, student.gender, studentGradeLevel);
       const totalScore = calculateTotalScore(scores, applicableItems);
       const gradeLevel = calculateGradeLevel(totalScore);
 
       // 调试日志
-      console.log(`\n=== 学生 ${student.name} (${student.gender}) 的分数计算结果 ===`);
+      console.log(`\n=== 学生 ${student.name} (${student.gender}, 年级${studentGradeLevel}) 的分数计算结果 ===`);
       console.log('测试数据:', testData);
       console.log('各项分数:', scores);
       console.log('总分:', totalScore);

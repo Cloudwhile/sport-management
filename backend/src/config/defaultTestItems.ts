@@ -255,6 +255,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 5,
+    weight: 20,
     validationRules: {
       min: 5,
       max: 30,
@@ -415,6 +416,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 6,
+    weight: 10,
     validationRules: {
       min: 50,
       max: 350,
@@ -574,6 +576,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 7,
+    weight: 10,
     validationRules: {
       min: -20,
       max: 50,
@@ -733,6 +736,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 8,
+    weight: 10,
     validationRules: {
       min: 0,
       max: 100,
@@ -821,6 +825,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 9,
+    weight: 10,
     validationRules: {
       min: 0,
       max: 50,
@@ -909,6 +914,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 10,
+    weight: 20,
     validationRules: {
       min: 120,
       max: 600,
@@ -998,6 +1004,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 11,
+    weight: 20,
     validationRules: {
       min: 150,
       max: 800,

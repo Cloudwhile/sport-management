@@ -9,7 +9,7 @@
           </div>
         </div>
         <h2 class="mt-6 text-3xl font-extrabold text-gray-900">
-          学校体测数据管理系统
+          {{ appTitle }}
         </h2>
         <p class="mt-2 text-sm text-gray-600">
           请登录以继续使用系统
@@ -115,7 +115,7 @@
       <!-- 底部版权信息 -->
       <div class="text-center">
         <p class="text-xs text-gray-500">
-          &copy; 2025 学校体测数据管理系统. All rights reserved.
+          &copy; {{ todayYear }} {{ appTitle }}. All rights reserved.
         </p>
       </div>
     </div>
@@ -131,6 +131,10 @@ import { UserIcon, LockClosedIcon, BuildingLibraryIcon } from '@heroicons/vue/24
 // ==================== 初始化 ====================
 const router = useRouter()
 const authStore = useAuthStore()
+
+// 获取应用标题
+const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const todayYear = new Date().getFullYear()
 
 // ==================== 表单数据 ====================
 const formData = reactive({

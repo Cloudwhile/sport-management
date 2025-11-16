@@ -2,11 +2,16 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { ArrowRightOnRectangleIcon } from '@heroicons/vue/24/outline'
+import { useUIStore } from '@/stores/ui'
+import { ArrowRightOnRectangleIcon, Bars3Icon } from '@heroicons/vue/24/outline'
 import { UserRole } from '@/types/common'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const uiStore = useUIStore()
+
+// 获取应用标题
+const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
 
 // 计算角色显示名称
 const roleLabel = computed(() => {
@@ -50,10 +55,19 @@ const handleLogout = async () => {
     <div class="h-full flex items-center justify-between px-6">
       <!-- Logo 和标题 -->
       <div class="flex items-center space-x-3">
+        <!-- 侧边栏切换按钮 -->
+        <button
+          @click="uiStore.toggleSidebar"
+          class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors duration-200"
+          title="收缩/展开侧边栏"
+        >
+          <Bars3Icon class="w-6 h-6" />
+        </button>
+
         <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600">
           <span class="text-white font-bold text-lg">体测</span>
         </div>
-        <h1 class="text-xl font-semibold text-gray-900">学校体测数据管理系统</h1>
+        <h1 class="text-xl font-semibold text-gray-900">{{ appTitle }}</h1>
       </div>
 
       <!-- 用户信息和操作 -->

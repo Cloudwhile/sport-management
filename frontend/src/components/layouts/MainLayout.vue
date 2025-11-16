@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 import Navbar from './Navbar.vue'
 import Sidebar from './Sidebar.vue'
 
 const authStore = useAuthStore()
+const uiStore = useUIStore()
 
 // 初始化时确保已加载用户信息
 onMounted(async () => {
@@ -15,6 +17,11 @@ onMounted(async () => {
       console.error('获取用户信息失败:', err)
     }
   }
+})
+
+// 计算主内容区域的左边距
+const contentPadding = computed(() => {
+  return uiStore.sidebarCollapsed ? 'pl-16' : 'pl-64'
 })
 </script>
 
@@ -27,7 +34,7 @@ onMounted(async () => {
     <Sidebar />
 
     <!-- 主内容区 -->
-    <main class="pt-16 pl-64">
+    <main :class="['pt-16 transition-all duration-300', contentPadding]">
       <div class="p-6">
         <router-view />
       </div>

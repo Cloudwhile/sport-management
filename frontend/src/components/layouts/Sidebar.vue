@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useUIStore } from '@/stores/ui'
 import { UserRole } from '@/types/common'
 import {
   HomeIcon,
@@ -10,7 +11,8 @@ import {
   UserGroupIcon,
   DocumentTextIcon,
   ClipboardDocumentListIcon,
-  ChartBarIcon
+  ChartBarIcon,
+  InformationCircleIcon
 } from '@heroicons/vue/24/outline'
 import {
   HomeIcon as HomeIconSolid,
@@ -19,12 +21,28 @@ import {
   UserGroupIcon as UserGroupIconSolid,
   DocumentTextIcon as DocumentTextIconSolid,
   ClipboardDocumentListIcon as ClipboardDocumentListIconSolid,
-  ChartBarIcon as ChartBarIconSolid
+  ChartBarIcon as ChartBarIconSolid,
+  InformationCircleIcon as InformationCircleIconSolid
 } from '@heroicons/vue/24/solid'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const uiStore = useUIStore()
+
+// 获取应用标题
+const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const todayYear = new Date().getFullYear()
+
+// 恢复侧边栏状态
+onMounted(() => {
+  uiStore.restoreSidebarState()
+})
+
+// 计算侧边栏宽度
+const sidebarWidth = computed(() => {
+  return uiStore.sidebarCollapsed ? 'w-16' : 'w-64'
+})
 
 // 菜单项类型
 interface MenuItem {
@@ -83,6 +101,12 @@ const allMenuItems: MenuItem[] = [
     icon: ChartBarIcon,
     iconSolid: ChartBarIconSolid,
     roles: [UserRole.ADMIN, UserRole.TEACHER]
+  },
+  {
+    name: 'About',
+    label: '关于我们',
+    icon: InformationCircleIcon,
+    iconSolid: InformationCircleIconSolid
   }
 ]
 
@@ -109,27 +133,70 @@ const navigateTo = (itemName: string) => {
 </script>
 
 <template>
-  <aside class="fixed top-16 left-0 bottom-0 w-64 bg-white border-r border-gray-200 z-30">
-    <nav class="h-full overflow-y-auto py-4">
+  <aside
+    :class="[
+      'fixed top-16 left-0 bottom-0 bg-white border-r border-gray-200 z-30 transition-all duration-300 flex flex-col',
+      sidebarWidth
+    ]"
+  >
+    <nav class="flex-1 overflow-y-auto py-4">
       <ul class="space-y-1 px-3">
         <li v-for="item in menuItems" :key="item.name">
           <button
             @click="navigateTo(item.name)"
             :class="[
-              'w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200',
+              'w-full flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-colors duration-200 group relative',
+              uiStore.sidebarCollapsed ? 'justify-center' : 'space-x-3',
               isActive(item.name)
                 ? 'bg-blue-50 text-blue-700'
                 : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
             ]"
+            :title="uiStore.sidebarCollapsed ? item.label : ''"
           >
             <component
               :is="isActive(item.name) ? item.iconSolid : item.icon"
               class="w-5 h-5 flex-shrink-0"
             />
-            <span>{{ item.label }}</span>
+            <span
+              v-show="!uiStore.sidebarCollapsed"
+              class="transition-opacity duration-200"
+            >
+              {{ item.label }}
+            </span>
+
+            <!-- 收缩时的提示框 -->
+            <div
+              v-if="uiStore.sidebarCollapsed"
+              class="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none z-50"
+            >
+              {{ item.label }}
+            </div>
           </button>
         </li>
       </ul>
     </nav>
+
+    <!-- 版本信息 -->
+    <div
+      :class="[
+        'border-t border-gray-200 py-3 px-3',
+        uiStore.sidebarCollapsed ? 'text-center' : ''
+      ]"
+    >
+      <div
+        v-if="!uiStore.sidebarCollapsed"
+        class="text-xs text-gray-500"
+      >
+        <p class="font-medium">Version 1.0.0</p>
+        <p class="mt-0.5">&copy; {{ todayYear }} {{ appTitle }}</p>
+      </div>
+      <div
+        v-else
+        class="text-xs text-gray-500 font-medium"
+        title="Version 1.0.0"
+      >
+        v1.0
+      </div>
+    </div>
   </aside>
 </template>

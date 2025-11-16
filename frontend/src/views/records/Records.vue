@@ -79,6 +79,7 @@ const selectedForm = ref<PhysicalTestFormWithItems | null>(null)
 const classes = ref<Class[]>([])
 const selectedClass = ref<Class | null>(null)
 const cohortFilter = ref<string>('') // 年级筛选
+const classProgressMap = ref<Map<number, { total: number; completed: number }>>(new Map()) // 班级完成进度
 
 // 学生和体测数据
 const students = ref<Student[]>([])
@@ -152,11 +153,56 @@ const fetchClasses = async () => {
     // 使用大的 limit 来获取所有班级
     const response = await classesAPI.getClasses({ page: 1, pageSize: 1000 })
     classes.value = response.data
+
+    // 获取每个班级的完成进度
+    if (selectedForm.value) {
+      await fetchClassesProgress()
+    }
   } catch (error: any) {
     toast.error(error.message || '获取班级列表失败')
   } finally {
     loading.value = false
   }
+}
+
+// 获取所有班级的完成进度
+const fetchClassesProgress = async () => {
+  if (!selectedForm.value) return
+
+  const participatingCohorts = selectedForm.value.participatingCohorts || []
+  const eligibleClasses = classes.value.filter(cls => participatingCohorts.includes(cls.cohort))
+
+  // 并发获取所有班级的进度
+  const progressPromises = eligibleClasses.map(async (cls) => {
+    try {
+      const studentsData = await recordsAPI.getClassStudentsForForm(
+        selectedForm.value!.id,
+        cls.id
+      )
+
+      const total = studentsData.length
+      const completed = studentsData.filter(s => s._record?.submittedAt).length
+
+      classProgressMap.value.set(cls.id, { total, completed })
+    } catch (error) {
+      // 如果获取失败，设置为0
+      classProgressMap.value.set(cls.id, { total: 0, completed: 0 })
+    }
+  })
+
+  await Promise.all(progressPromises)
+}
+
+// 获取班级完成进度
+const getClassProgress = (classId: number) => {
+  return classProgressMap.value.get(classId) || { total: 0, completed: 0 }
+}
+
+// 计算班级完成百分比
+const getClassProgressPercent = (classId: number) => {
+  const progress = getClassProgress(classId)
+  if (progress.total === 0) return 0
+  return Math.round((progress.completed / progress.total) * 100)
 }
 
 // 过滤符合年级的班级
@@ -571,11 +617,18 @@ const submitAllData = async () => {
       selectedClass.value.id
     )
 
-    // 更新已有记录
+    // 更新已有记录和测试数据
     existingRecordsMap.value.clear()
+    testDataMap.value.clear()
+
     studentsData.forEach((item: any) => {
       if (item._record) {
+        // 有记录：保存到 existingRecordsMap，并用服务器返回的数据填充 testDataMap
         existingRecordsMap.value.set(item.id, item._record)
+        testDataMap.value.set(item.id, { ...item._record.testData })
+      } else {
+        // 无记录：初始化为空对象
+        testDataMap.value.set(item.id, {})
       }
     })
 
@@ -1067,9 +1120,32 @@ watch(currentStep, (newStep) => {
               <h3 class="font-semibold text-gray-900 mb-2">
                 {{ classItem.cohort }} {{ classItem.className }}
               </h3>
-              <div class="space-y-1 text-sm text-gray-600">
-                <p v-if="classItem.currentGradeName">年级: {{ classItem.currentGradeName }}</p>
+              <div class="space-y-2 text-sm text-gray-600">
                 <p v-if="classItem.graduated" class="text-red-500">已毕业</p>
+
+                <!-- 完成进度 -->
+                <div class="space-y-1">
+                  <div class="flex items-center justify-between text-xs">
+                    <span class="text-gray-500">完成进度</span>
+                    <span class="font-medium text-gray-700">
+                      {{ getClassProgress(classItem.id).completed }} / {{ getClassProgress(classItem.id).total }}
+                      ({{ getClassProgressPercent(classItem.id) }}%)
+                    </span>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-300"
+                      :class="[
+                        getClassProgressPercent(classItem.id) === 100
+                          ? 'bg-green-500'
+                          : getClassProgressPercent(classItem.id) >= 50
+                          ? 'bg-blue-500'
+                          : 'bg-yellow-500'
+                      ]"
+                      :style="{ width: `${getClassProgressPercent(classItem.id)}%` }"
+                    ></div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
