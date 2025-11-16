@@ -78,13 +78,46 @@ export const defaultTestItems: DefaultTestItem[] = [
     },
     scoringStandard: {
       description: 'BMI自动计算: 体重(kg) / 身高²(m)',
-      type: 'calculated',
-      formula: 'weight / (height/100)²',
-      ranges: {
-        underweight: { max: 18.5, score: 60 },
-        normal: { min: 18.5, max: 23.9, score: 100 },
-        overweight: { min: 24, max: 27.9, score: 80 },
-        obese: { min: 28, score: 60 },
+      type: 'numeric',
+      male: {
+        grade1: [
+          { max: 16.4, score: 80 },
+          { min: 16.5, max: 23.2, score: 100 },
+          { min: 23.3, max: 26.3, score: 80 },
+          { min: 26.4, score: 60 },
+        ],
+        grade2: [
+          { max: 16.7, score: 80 },
+          { min: 16.8, max: 23.7, score: 100 },
+          { min: 23.8, max: 26.5, score: 80 },
+          { min: 26.6, score: 60 },
+        ],
+        grade3: [
+          { max: 17.2, score: 80 },
+          { min: 17.3, max: 23.8, score: 100 },
+          { min: 23.9, max: 27.3, score: 80 },
+          { min: 27.4, score: 60 },
+        ],
+      },
+      female: {
+        grade1: [
+          { max: 16.4, score: 80 },
+          { min: 16.5, max: 22.7, score: 100 },
+          { min: 22.8, max: 25.2, score: 80 },
+          { min: 25.3, score: 60 },
+        ],
+        grade2: [
+          { max: 16.8, score: 80 },
+          { min: 16.9, max: 23.2, score: 100 },
+          { min: 23.3, max: 25.4, score: 80 },
+          { min: 25.5, score: 60 },
+        ],
+        grade3: [
+          { max: 17.0, score: 80 },
+          { min: 17.1, max: 23.3, score: 100 },
+          { min: 23.4, max: 25.7, score: 80 },
+          { min: 25.8, score: 60 },
+        ],
       },
     },
   },
