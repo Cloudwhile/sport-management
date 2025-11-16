@@ -37,8 +37,8 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       # 应用配置
-      APP_PORT: 3000
-      APP_HOST: 0.0.0.0
+      PORT: 3000
+      HOST: 0.0.0.0
       # JWT 配置
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
@@ -46,7 +46,7 @@ services:
       AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
       AUTO_SEED: ${AUTO_SEED:-true}
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "${PORT:-3000}:3000"
     depends_on:
       postgres:
         condition: service_healthy
