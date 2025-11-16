@@ -5,6 +5,7 @@ export interface PhysicalTestFormAttributes {
   id: number;
   formName: string;
   academicYear: string;
+  participatingCohorts: string[];
   testDate?: string;
   startTime?: Date;
   endTime?: Date;
@@ -32,6 +33,12 @@ const PhysicalTestForm = sequelize.define<Model<PhysicalTestFormAttributes>>('Ph
     allowNull: false,
     field: 'academic_year',
     comment: '学年',
+  },
+  participatingCohorts: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    field: 'participating_cohorts',
+    comment: '参与的年级(入学年份数组), 如 ["2022", "2023"]',
   },
   testDate: {
     type: DataTypes.DATEONLY,

@@ -6,7 +6,7 @@ import {
   calculateGradeLevel,
   getCurrentAcademicYear,
   getGradeName,
-  getGraduationYear,
+  isGraduated,
   isValidCohort,
   extractClassNumber,
 } from '../utils/gradeHelper.js';
@@ -23,6 +23,8 @@ class ClassController {
     try {
       const {
         cohort,
+        className,
+        classAccount,
         gradeLevel,
         academicYear,
         graduated,
@@ -30,16 +32,46 @@ class ClassController {
         pageSize = 10,
       } = req.query;
 
+      // 获取当前学年用于计算年级
+      const currentYear = academicYear as string || await getCurrentAcademicYear();
+
       const where: any = {};
 
-      // 按cohort筛选
-      if (cohort) {
-        where.cohort = cohort;
+      // 按className筛选（模糊匹配）
+      if (className) {
+        where.className = { [Op.iLike]: `%${className}%` };
       }
 
-      // 按是否毕业筛选
-      if (graduated !== undefined) {
-        where.graduated = graduated === 'true';
+      // 按classAccount筛选（模糊匹配）
+      if (classAccount) {
+        where.classAccount = { [Op.iLike]: `%${classAccount}%` };
+      }
+
+      // cohort、gradeLevel、graduated 三者只能选其一（优先级：gradeLevel > graduated > cohort）
+      if (gradeLevel) {
+        // 按年级筛选（需要计算对应的cohort）
+        const targetLevel = parseInt(gradeLevel as string);
+        const currentYearInt = parseInt(currentYear.split('-')[0]); // 从 "2024-2025" 取 2024
+        const targetCohort = (currentYearInt - targetLevel + 1).toString();
+        where.cohort = targetCohort;
+      } else if (graduated !== undefined) {
+        // 按毕业状态筛选（需要计算对应的cohort范围）
+        const isGraduatedFilter = graduated === 'true';
+        const currentYearInt = parseInt(currentYear.split('-')[0]);
+        const config = (await import('../config/school.js')).getSchoolConfig();
+
+        if (isGraduatedFilter) {
+          // 已毕业：cohort < (当前年份 - 学制年数 + 1)
+          const maxGraduatedCohort = currentYearInt - config.schoolYears;
+          where.cohort = { [Op.lt]: maxGraduatedCohort.toString() };
+        } else {
+          // 未毕业：cohort >= (当前年份 - 学制年数 + 1)
+          const minActiveCohort = currentYearInt - config.schoolYears + 1;
+          where.cohort = { [Op.gte]: minActiveCohort.toString() };
+        }
+      } else if (cohort) {
+        // 按cohort筛选（精确匹配）
+        where.cohort = cohort;
       }
 
       const limit = parseInt(pageSize as string);
@@ -55,30 +87,35 @@ class ClassController {
         ],
       });
 
-      // 获取当前学年用于计算年级
-      const currentYear = academicYear as string || await getCurrentAcademicYear();
+      // 导入StudentClassRelation用于统计学生数量
+      const StudentClassRelation = (await import('../models/StudentClassRelation.js')).default;
 
-      // 为每个班级添加计算的年级信息
-      let classesWithGrade = rows.map((cls) => {
-        const classData = cls.toJSON() as any;
-        const currentGradeLevel = calculateGradeLevel(classData.cohort, currentYear);
+      // 为每个班级添加计算的年级信息和学生数量
+      const classesWithGrade = await Promise.all(
+        rows.map(async (cls) => {
+          const classData = cls.toJSON() as any;
+          const currentGradeLevel = calculateGradeLevel(classData.cohort, currentYear);
 
-        return {
-          ...classData,
-          currentGradeLevel,
-          currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '已毕业',
-          currentAcademicYear: currentYear,
-        };
-      });
+          // 统计当前在读学生数量
+          const studentCount = await StudentClassRelation.count({
+            where: {
+              classId: classData.id,
+              isActive: true,
+            },
+          });
 
-      // 如果指定了gradeLevel筛选，过滤结果
-      if (gradeLevel) {
-        const targetLevel = parseInt(gradeLevel as string);
-        classesWithGrade = classesWithGrade.filter(
-          (cls) => cls.currentGradeLevel === targetLevel
-        );
-        count = classesWithGrade.length;
-      }
+          // 移除敏感字段
+          const { classPassword, ...safeData } = classData;
+
+          return {
+            ...safeData,
+            currentGradeLevel,
+            currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '已毕业',
+            currentAcademicYear: currentYear,
+            studentCount,
+          };
+        })
+      );
 
       res.json({
         success: true,
@@ -123,10 +160,13 @@ class ClassController {
       const classJson = classData.toJSON() as any;
       const currentGradeLevel = calculateGradeLevel(classJson.cohort, currentYear);
 
+      // 移除敏感字段
+      const { classPassword, ...safeData } = classJson;
+
       res.json({
         success: true,
         data: {
-          ...classJson,
+          ...safeData,
           currentGradeLevel,
           currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '已毕业',
           currentAcademicYear: currentYear,
@@ -163,7 +203,7 @@ class ClassController {
       if (!isValidCohort(cohort)) {
         res.status(400).json({
           success: false,
-          error: 'cohort格式不正确，应为"2024级"格式',
+          error: 'cohort格式不正确，应为"2024"格式（纯数字年份）',
         });
         return;
       }
@@ -185,9 +225,8 @@ class ClassController {
       }
 
       // 生成固定的班级账号：class_{入学年份}_{班号}
-      const cohortYear = cohort.replace(/级$/, '');
       const classNumber = extractClassNumber(className);
-      const classAccount = `class_${cohortYear}_${classNumber}`;
+      const classAccount = `class_${cohort}_${classNumber}`;
 
       // 检查账号是否已被使用
       const existingAccount = await Class.findOne({
@@ -206,17 +245,12 @@ class ClassController {
       const defaultPassword = '123456';
       const hashedPassword = await bcrypt.hash(defaultPassword, 10);
 
-      // 计算预计毕业年份
-      const graduationYear = getGraduationYear(cohort, schoolYears);
-
-      // 创建班级
+      // 创建班级（毕业状态将自动计算）
       const newClass = await Class.create({
         cohort,
         className,
         classAccount,
         classPassword: hashedPassword,
-        graduated: false,
-        graduationYear,
       });
 
       // 添加计算的年级信息
@@ -224,10 +258,13 @@ class ClassController {
       const classJson = newClass.toJSON() as any;
       const currentGradeLevel = calculateGradeLevel(cohort, currentYear);
 
+      // 移除敏感字段
+      const { classPassword: _, ...safeData } = classJson;
+
       res.status(201).json({
         success: true,
         data: {
-          ...classJson,
+          ...safeData,
           currentGradeLevel,
           currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '未入学',
           currentAcademicYear: currentYear,
@@ -250,7 +287,7 @@ class ClassController {
   async update(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const { cohort, className, graduated, schoolYears = 3 } = req.body;
+      const { cohort, className } = req.body;
 
       // 查找班级
       const classData = await Class.findByPk(id);
@@ -266,7 +303,7 @@ class ClassController {
       if (cohort && !isValidCohort(cohort)) {
         res.status(400).json({
           success: false,
-          error: 'cohort格式不正确，应为"2024级"格式',
+          error: 'cohort格式不正确，应为"2024"格式',
         });
         return;
       }
@@ -293,11 +330,10 @@ class ClassController {
         }
       }
 
-      // 更新班级信息
+      // 更新班级信息（毕业状态将自动计算）
       const updateData: any = {};
       if (cohort) updateData.cohort = cohort;
       if (className) updateData.className = className;
-      if (graduated !== undefined) updateData.graduated = graduated;
 
       // 如果更新了cohort或className，重新生成班级账号
       if (cohort || className) {
@@ -309,11 +345,6 @@ class ClassController {
         updateData.classAccount = `class_${cohortYear}_${classNumber}`;
       }
 
-      // 如果更新了cohort，重新计算毕业年份
-      if (cohort) {
-        updateData.graduationYear = getGraduationYear(cohort, schoolYears);
-      }
-
       await classData.update(updateData);
 
       // 重新查询并添加年级信息
@@ -322,10 +353,13 @@ class ClassController {
       const classJson = updatedClass!.toJSON() as any;
       const currentGradeLevel = calculateGradeLevel(classJson.cohort, currentYear);
 
+      // 移除敏感字段
+      const { classPassword, ...safeData } = classJson;
+
       res.json({
         success: true,
         data: {
-          ...classJson,
+          ...safeData,
           currentGradeLevel,
           currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '已毕业',
           currentAcademicYear: currentYear,
@@ -547,6 +581,119 @@ class ClassController {
       res.status(500).json({
         success: false,
         error: '从班级移除学生失败',
+        message: (error as Error).message,
+      });
+    }
+  }
+
+  /**
+   * 获取班级统计详情
+   * 包括：班级基本信息、学生列表、体测统计数据
+   */
+  async getStatistics(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { academicYear } = req.query;
+
+      // 查找班级
+      const classData = await Class.findByPk(id);
+      if (!classData) {
+        res.status(404).json({
+          success: false,
+          error: '班级不存在',
+        });
+        return;
+      }
+
+      // 获取当前学年
+      const currentYear = academicYear as string || await getCurrentAcademicYear();
+      const classJson = classData.toJSON() as any;
+      const currentGradeLevel = calculateGradeLevel(classJson.cohort, currentYear);
+
+      // 导入必要的模型
+      const Student = (await import('../models/Student.js')).default;
+      const StudentClassRelation = (await import('../models/StudentClassRelation.js')).default;
+      const PhysicalTestRecord = (await import('../models/PhysicalTestRecord.js')).default;
+      const PhysicalTestForm = (await import('../models/PhysicalTestForm.js')).default;
+
+      // 获取班级的所有当前在读学生
+      const studentRelations = await StudentClassRelation.findAll({
+        where: {
+          classId: id,
+          isActive: true,
+        },
+        include: [
+          {
+            model: Student,
+            as: 'student',
+            attributes: ['id', 'studentIdNational', 'studentIdSchool', 'name', 'gender', 'birthDate'],
+          },
+        ],
+        order: [['id', 'ASC']],
+      });
+
+      const students = studentRelations.map((rel: any) => rel.student);
+
+      // 统计该班级参与的体测表单数量
+      const testFormsCount = await PhysicalTestForm.count({
+        where: {
+          participatingCohorts: {
+            [Op.contains]: [classJson.cohort.replace(/级$/, '')],
+          },
+        },
+      });
+
+      // 统计该班级学生的体测记录总数
+      const studentIds = students.map((s: any) => s.id);
+      const testRecordsCount = studentIds.length > 0
+        ? await PhysicalTestRecord.count({
+            where: {
+              studentId: {
+                [Op.in]: studentIds,
+              },
+            },
+          })
+        : 0;
+
+      // 计算平均完成率（如果有体测表单的话）
+      let completionRate = 0;
+      if (testFormsCount > 0 && students.length > 0) {
+        const totalExpectedRecords = testFormsCount * students.length;
+        completionRate = totalExpectedRecords > 0
+          ? Math.round((testRecordsCount / totalExpectedRecords) * 100)
+          : 0;
+      }
+
+      // 移除敏感字段
+      const { classPassword, ...safeClassData } = classJson;
+
+      // 返回统计数据
+      res.json({
+        success: true,
+        data: {
+          // 班级基本信息
+          classInfo: {
+            ...safeClassData,
+            currentGradeLevel,
+            currentGradeName: currentGradeLevel ? getGradeName(currentGradeLevel) : '已毕业',
+            currentAcademicYear: currentYear,
+            studentCount: students.length,
+          },
+          // 学生列表
+          students,
+          // 体测统计
+          testStatistics: {
+            participatedFormsCount: testFormsCount, // 参与的体测表单数量
+            totalRecordsCount: testRecordsCount, // 体测记录总数
+            completionRate, // 完成率（百分比）
+          },
+        },
+      });
+    } catch (error) {
+      console.error('获取班级统计信息失败:', error);
+      res.status(500).json({
+        success: false,
+        error: '获取班级统计信息失败',
         message: (error as Error).message,
       });
     }

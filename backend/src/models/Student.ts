@@ -9,7 +9,7 @@ interface StudentAttributes {
   gender: 'male' | 'female';
   birthDate?: string;
   idCardNumber?: string;
-  phone?: string;
+  ethnicityCode?: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -55,9 +55,10 @@ const Student = sequelize.define<Model<StudentAttributes>>('Student', {
     field: 'id_card_number',
     comment: '身份证号',
   },
-  phone: {
-    type: DataTypes.STRING(20),
-    comment: '联系电话',
+  ethnicityCode: {
+    type: DataTypes.STRING(10),
+    field: 'ethnicity_code',
+    comment: '民族代码',
   },
 }, {
   tableName: 'students',

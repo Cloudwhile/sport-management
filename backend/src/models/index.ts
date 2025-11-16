@@ -23,7 +23,7 @@ User.hasMany(PhysicalTestForm, { foreignKey: 'createdBy', as: 'forms' });
 PhysicalTestForm.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
 
 // PhysicalTestForm - FormTestItem (一对多)
-PhysicalTestForm.hasMany(FormTestItem, { foreignKey: 'formId', as: 'testItems' });
+PhysicalTestForm.hasMany(FormTestItem, { foreignKey: 'formId', as: 'items' });
 FormTestItem.belongsTo(PhysicalTestForm, { foreignKey: 'formId', as: 'form' });
 
 // PhysicalTestForm - PhysicalTestRecord (一对多)

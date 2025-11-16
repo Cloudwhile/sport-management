@@ -11,6 +11,12 @@ export interface FormTestItemAttributes {
   isRequired: boolean;
   sortOrder: number;
   scoringStandard?: Record<string, unknown>;
+  validationRules?: {
+    min?: number;
+    max?: number;
+    decimals?: number;
+  };
+  isCalculated?: boolean;
   created_at?: Date;
 }
 
@@ -67,6 +73,17 @@ const FormTestItem = sequelize.define<Model<FormTestItemAttributes>>('FormTestIt
     type: DataTypes.JSONB,
     field: 'scoring_standard',
     comment: '评分标准',
+  },
+  validationRules: {
+    type: DataTypes.JSONB,
+    field: 'validation_rules',
+    comment: '验证规则配置',
+  },
+  isCalculated: {
+    type: DataTypes.BOOLEAN,
+    field: 'is_calculated',
+    defaultValue: false,
+    comment: '是否为计算型项目',
   },
 }, {
   tableName: 'form_test_items',

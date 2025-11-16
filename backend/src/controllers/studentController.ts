@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
+import * as XLSX from 'xlsx';
 import {
   Student,
   Class,
@@ -66,7 +67,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       include: includeConditions,
       limit,
       offset,
-      order: [['createdAt', 'DESC']],
+      order: [['created_at', 'DESC']],
       distinct: true,
     });
 
@@ -83,7 +84,6 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
         gender: studentData.gender,
         birthDate: studentData.birthDate,
         idCardNumber: studentData.idCardNumber,
-        phone: studentData.phone,
         createdAt: studentData.createdAt,
         updatedAt: studentData.updatedAt,
         currentClass: currentRelation
@@ -91,7 +91,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
               id: currentRelation.class.id,
               cohort: currentRelation.class.cohort,
               className: currentRelation.class.className,
-              classAccount: currentRelation.class.classAccount,
+              // classAccount 移除，学生端不需要看到班级账号
             }
           : null,
         currentAcademicYear: currentRelation ? currentRelation.academicYear : null,
@@ -149,7 +149,7 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
             id: currentRelation.class.id,
             cohort: currentRelation.class.cohort,
             className: currentRelation.class.className,
-            classAccount: currentRelation.class.classAccount,
+            // classAccount 移除，学生端不需要看到班级账号
           }
         : null,
       currentAcademicYear: currentRelation ? currentRelation.academicYear : null,
@@ -170,7 +170,6 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       gender,
       birthDate,
       idCardNumber,
-      phone,
       classId,
       academicYear,
     } = req.body;
@@ -219,7 +218,6 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       gender,
       birthDate,
       idCardNumber,
-      phone,
     });
 
     // 创建学生-班级关联
@@ -268,7 +266,6 @@ export const update = async (req: Request, res: Response): Promise<void> => {
       gender,
       birthDate,
       idCardNumber,
-      phone,
     } = req.body;
 
     const student = await Student.findByPk(id);
@@ -313,7 +310,6 @@ export const update = async (req: Request, res: Response): Promise<void> => {
       gender: gender || student.get('gender'),
       birthDate: birthDate !== undefined ? birthDate : student.get('birthDate'),
       idCardNumber: idCardNumber !== undefined ? idCardNumber : student.get('idCardNumber'),
-      phone: phone !== undefined ? phone : student.get('phone'),
     });
 
     // 获取更新后的完整信息
@@ -455,5 +451,295 @@ export const transfer = async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('转班失败:', error);
     res.status(500).json({ error: '转班失败', message: (error as Error).message });
+  }
+};
+
+// 批量导入学生
+export const batchImport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // 检查是否有上传文件
+    if (!req.file) {
+      res.status(400).json({ error: '请上传文件' });
+      return;
+    }
+
+    // 解析 Excel 文件
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    const results = {
+      success: 0,
+      failed: 0,
+      warnings: 0,
+      errors: [] as Array<{
+        row: number;
+        error: string;
+        data: any;
+        type: 'error' | 'warning';
+      }>,
+    };
+
+    // 用于跟踪每个班级和学年的组合
+    const classCache = new Map<string, { classId: number; academicYear: string }>();
+
+    // 处理每一行数据
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i] as any;
+      const rowNumber = i + 2; // Excel行号从2开始（第1行是表头）
+
+      try {
+        // 解析班级名称，格式：高中2024级1班
+        const classNameRaw = row['班级名称']?.toString().trim();
+        if (!classNameRaw) {
+          results.errors.push({
+            row: rowNumber,
+            error: '缺少班级名称',
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        // 提取入学年份（级）和班级编号
+        // 匹配格式：高中2024级1班 或 初中2023级2班
+        const classMatch = classNameRaw.match(/(\d{4})级(\d+)班/);
+        if (!classMatch) {
+          results.errors.push({
+            row: rowNumber,
+            error: `班级名称格式错误，应为"高中2024级1班"格式，实际为"${classNameRaw}"`,
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        const cohort = classMatch[1]; // 入学年份，如 "2024"
+        const classNumber = classMatch[2]; // 班级编号，如 "1"
+
+        // 将数字班级编号转换为中文
+        const numberToChinese = (num: string): string => {
+          const map: Record<string, string> = {
+            '1': '一', '2': '二', '3': '三', '4': '四', '5': '五',
+            '6': '六', '7': '七', '8': '八', '9': '九', '10': '十',
+            '11': '十一', '12': '十二', '13': '十三', '14': '十四', '15': '十五',
+            '16': '十六', '17': '十七', '18': '十八', '19': '十九', '20': '二十'
+          };
+          return map[num] || num;
+        };
+
+        // 从班级名称中提取学段和班级名（如 "一班"）
+        const classNameOnly = `${numberToChinese(classNumber)}班`;
+
+        // 查找或缓存班级
+        const cacheKey = `${cohort}-${classNameOnly}`;
+        let classInfo = classCache.get(cacheKey);
+
+        if (!classInfo) {
+          // 查找班级
+          let foundClass = await Class.findOne({
+            where: {
+              cohort,
+              className: classNameOnly,
+            },
+          });
+
+          // 如果班级不存在，自动创建
+          if (!foundClass) {
+            // 生成班级账号：格式为 class_cohort_classNumber，如 class_2024_01
+            const classAccount = `class_${cohort}_${classNumber.padStart(2, '0')}`;
+            // 生成默认密码：格式为 cohort+班级编号，如 202401
+            const classPassword = `${cohort}${classNumber.padStart(2, '0')}`;
+
+            foundClass = await Class.create({
+              cohort,
+              className: classNameOnly,
+              classAccount,
+              classPassword,
+            });
+
+            console.log(`自动创建班级：${cohort}级 ${classNameOnly}，账号：${classAccount}`);
+          }
+
+          classInfo = {
+            classId: foundClass.get('id') as number,
+            academicYear: cohort, // 使用入学年份作为学年
+          };
+          classCache.set(cacheKey, classInfo);
+        }
+
+        // 验证必填字段
+        const studentIdNational = row['学籍号']?.toString().trim();
+        const name = row['姓名']?.toString().trim();
+        const genderCode = row['性别'];
+
+        const missingFields = [];
+        if (!studentIdNational) missingFields.push('学籍号');
+        if (!name) missingFields.push('姓名');
+        if (genderCode === undefined || genderCode === null) missingFields.push('性别');
+
+        if (missingFields.length > 0) {
+          results.errors.push({
+            row: rowNumber,
+            error: `缺少必填字段：${missingFields.join('、')}`,
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        // 性别转换：1=男，2=女
+        let gender: 'male' | 'female';
+        const genderNum = parseInt(genderCode.toString());
+        if (genderNum === 1) {
+          gender = 'male';
+        } else if (genderNum === 2) {
+          gender = 'female';
+        } else {
+          results.errors.push({
+            row: rowNumber,
+            error: `性别代码错误，应为1（男）或2（女），实际为"${genderCode}"`,
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        // 检查学籍号是否已存在
+        const existingNational = await Student.findOne({
+          where: { studentIdNational },
+        });
+        if (existingNational) {
+          results.errors.push({
+            row: rowNumber,
+            error: `学籍号 ${studentIdNational} 已存在`,
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        // 生成学校学号（使用入学年份+班级编号+序号的方式，或使用学籍号）
+        // 这里简单使用学籍号作为学校学号，你可以根据实际需求调整
+        const studentIdSchool = studentIdNational;
+
+        // 检查学校学号是否已存在
+        const existingSchool = await Student.findOne({
+          where: { studentIdSchool },
+        });
+        if (existingSchool) {
+          results.errors.push({
+            row: rowNumber,
+            error: `学校学号 ${studentIdSchool} 已存在`,
+            data: row,
+            type: 'error',
+          });
+          results.failed++;
+          continue;
+        }
+
+        // 处理出生日期（格式：2009/08/08 或 Excel序列号）
+        let birthDate: string | null = null;
+        if (row['出生日期']) {
+          const birthDateRaw = row['出生日期'];
+
+          // 检查是否为 Excel 日期序列号（纯数字）
+          if (typeof birthDateRaw === 'number') {
+            // Excel 日期序列号转换为 JS 日期
+            // Excel 日期从 1900-01-01 开始，但有一个1900年闰年bug，实际需要减去2
+            const excelEpoch = new Date(1899, 11, 30); // 1899年12月30日
+            const jsDate = new Date(excelEpoch.getTime() + birthDateRaw * 86400000); // 86400000ms = 1天
+
+            const year = jsDate.getFullYear();
+            const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+            const day = String(jsDate.getDate()).padStart(2, '0');
+            birthDate = `${year}-${month}-${day}`;
+          } else {
+            // 尝试解析文本格式的日期
+            const birthDateStr = birthDateRaw.toString().trim();
+            const dateMatch = birthDateStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+            if (dateMatch) {
+              const year = dateMatch[1];
+              const month = dateMatch[2].padStart(2, '0');
+              const day = dateMatch[3].padStart(2, '0');
+              birthDate = `${year}-${month}-${day}`;
+            } else {
+              results.errors.push({
+                row: rowNumber,
+                error: `出生日期格式错误："${birthDateStr}"，应为 YYYY/MM/DD 格式`,
+                data: row,
+                type: 'warning',
+              });
+              results.warnings++;
+            }
+          }
+        }
+
+        // 处理身份证号（可能为空，转为字符串）
+        let idCardNumber: string | null = null;
+        if (row['身份证号']) {
+          idCardNumber = row['身份证号'].toString().trim();
+          if (!idCardNumber) {
+            idCardNumber = null;
+          }
+        }
+
+        // 处理民族代码（数字）
+        let ethnicityCode: string | null = null;
+        if (row['民族代码']) {
+          ethnicityCode = row['民族代码'].toString().trim();
+          if (!ethnicityCode) {
+            ethnicityCode = null;
+          }
+        }
+
+        // 创建学生
+        const student = await Student.create({
+          studentIdNational,
+          studentIdSchool,
+          name,
+          gender,
+          birthDate,
+          idCardNumber,
+          ethnicityCode,
+        });
+
+        // 创建学生-班级关联
+        await StudentClassRelation.create({
+          studentId: student.get('id') as number,
+          classId: classInfo.classId,
+          academicYear: classInfo.academicYear,
+          isActive: true,
+        });
+
+        results.success++;
+      } catch (error) {
+        console.error(`第 ${rowNumber} 行导入失败:`, (error as Error).message, '数据:', row);
+        results.errors.push({
+          row: rowNumber,
+          error: (error as Error).message,
+          data: row,
+          type: 'error',
+        });
+        results.failed++;
+      }
+    }
+
+    console.log('批量导入完成:', results);
+    console.log('失败的前10条:', results.errors.slice(0, 10));
+
+    res.json({
+      message: `批量导入完成，成功 ${results.success} 条，失败 ${results.failed} 条，警告 ${results.warnings} 条`,
+      data: results,
+    });
+  } catch (error) {
+    console.error('批量导入失败:', error);
+    res.status(500).json({ error: '批量导入失败', message: (error as Error).message });
   }
 };

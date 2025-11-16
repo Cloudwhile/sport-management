@@ -22,6 +22,13 @@ router.get('/', classController.getAll);
 router.get('/:id', classController.getById);
 
 /**
+ * @route   GET /api/classes/:id/statistics
+ * @desc    获取班级统计详情（包含学生列表和体测统计）
+ * @access  Private (认证用户)
+ */
+router.get('/:id/statistics', classController.getStatistics);
+
+/**
  * @route   POST /api/classes
  * @desc    创建班级
  * @access  Admin + Teacher

@@ -10,6 +10,12 @@ export interface DefaultTestItem {
   isRequired: boolean;
   sortOrder: number;
   scoringStandard?: Record<string, unknown>;
+  validationRules?: {
+    min?: number;
+    max?: number;
+    decimals?: number;
+  };
+  isCalculated?: boolean; // 是否为计算型项目（不需要手动输入）
 }
 
 /**
@@ -26,6 +32,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 1,
+    validationRules: {
+      min: 100,
+      max: 230,
+      decimals: 1,
+    },
     scoringStandard: {
       description: '身高测量值',
       type: 'numeric',
@@ -38,6 +49,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 2,
+    validationRules: {
+      min: 20,
+      max: 200,
+      decimals: 1,
+    },
     scoringStandard: {
       description: '体重测量值',
       type: 'numeric',
@@ -50,6 +66,12 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 3,
+    isCalculated: true, // BMI 由后端自动计算
+    validationRules: {
+      min: 8,
+      max: 50,
+      decimals: 2,
+    },
     scoringStandard: {
       description: 'BMI自动计算: 体重(kg) / 身高²(m)',
       type: 'calculated',
@@ -69,6 +91,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 4,
+    validationRules: {
+      min: 500,
+      max: 8000,
+      decimals: 0,
+    },
     scoringStandard: {
       description: '肺活量测量值',
       type: 'numeric',
@@ -93,6 +120,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 5,
+    validationRules: {
+      min: 5,
+      max: 30,
+      decimals: 2,
+    },
     scoringStandard: {
       description: '50米跑成绩(秒)',
       type: 'numeric',
@@ -118,6 +150,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 6,
+    validationRules: {
+      min: 50,
+      max: 350,
+      decimals: 1,
+    },
     scoringStandard: {
       description: '立定跳远距离',
       type: 'numeric',
@@ -142,6 +179,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 7,
+    validationRules: {
+      min: -20,
+      max: 50,
+      decimals: 1,
+    },
     scoringStandard: {
       description: '坐位体前屈距离',
       type: 'numeric',
@@ -166,6 +208,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 8,
+    validationRules: {
+      min: 0,
+      max: 100,
+      decimals: 0,
+    },
     scoringStandard: {
       description: '仰卧起坐1分钟次数(仅女生)',
       type: 'numeric',
@@ -184,6 +231,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 9,
+    validationRules: {
+      min: 0,
+      max: 50,
+      decimals: 0,
+    },
     scoringStandard: {
       description: '引体向上次数(仅男生)',
       type: 'numeric',
@@ -202,6 +254,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 10,
+    validationRules: {
+      min: 120,
+      max: 600,
+      decimals: 2,
+    },
     scoringStandard: {
       description: '800米跑成绩(仅女生)',
       type: 'time',
@@ -221,6 +278,11 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 11,
+    validationRules: {
+      min: 150,
+      max: 800,
+      decimals: 2,
+    },
     scoringStandard: {
       description: '1000米跑成绩(仅男生)',
       type: 'time',

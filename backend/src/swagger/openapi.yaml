@@ -1011,7 +1011,7 @@ paths:
                       - $ref: '#/components/schemas/PhysicalTestForm'
                       - type: object
                         properties:
-                          testItems:
+                          items:
                             type: array
                             items:
                               $ref: '#/components/schemas/FormTestItem'
@@ -1199,7 +1199,7 @@ paths:
                           properties:
                             student:
                               $ref: '#/components/schemas/Student'
-                            testItems:
+                            items:
                               type: array
                               items:
                                 $ref: '#/components/schemas/FormTestItem'

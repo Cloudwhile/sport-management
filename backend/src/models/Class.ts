@@ -1,5 +1,6 @@
 import { DataTypes, Model } from 'sequelize';
 import sequelize from '../database/connection.js';
+import { isGraduated, getGraduationYear } from '../utils/gradeHelper.js';
 
 interface ClassAttributes {
   id: number;
@@ -7,13 +8,17 @@ interface ClassAttributes {
   className: string;
   classAccount?: string;
   classPassword?: string;
-  graduated?: boolean;
-  graduationYear?: string;
   created_at?: Date;
   updated_at?: Date;
 }
 
-const Class = sequelize.define<Model<ClassAttributes>>('Class', {
+// 扩展接口，包含虚拟字段
+interface ClassInstance extends Model<ClassAttributes>, ClassAttributes {
+  graduated: boolean;
+  graduationYear: string;
+}
+
+const Class = sequelize.define<ClassInstance>('Class', {
   id: {
     type: DataTypes.INTEGER,
     primaryKey: true,
@@ -22,7 +27,7 @@ const Class = sequelize.define<Model<ClassAttributes>>('Class', {
   cohort: {
     type: DataTypes.STRING(20),
     allowNull: false,
-    comment: '入学年份：2024级',
+    comment: '入学年份：2024',
   },
   className: {
     type: DataTypes.STRING(50),
@@ -41,21 +46,26 @@ const Class = sequelize.define<Model<ClassAttributes>>('Class', {
     field: 'class_password',
     comment: '班级密码哈希',
   },
+  // 虚拟字段：根据 cohort 自动计算是否已毕业
   graduated: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false,
-    comment: '是否已毕业',
+    type: DataTypes.VIRTUAL,
+    get(this: ClassInstance) {
+      const cohort = this.getDataValue('cohort');
+      return cohort ? isGraduated(cohort) : false;
+    },
   },
+  // 虚拟字段：根据 cohort 自动计算毕业年份
   graduationYear: {
-    type: DataTypes.STRING(10),
-    field: 'graduation_year',
-    comment: '毕业年份',
+    type: DataTypes.VIRTUAL,
+    get(this: ClassInstance) {
+      const cohort = this.getDataValue('cohort');
+      return cohort ? getGraduationYear(cohort) : '';
+    },
   },
 }, {
   tableName: 'classes',
   indexes: [
     { fields: ['cohort'] },
-    { fields: ['graduated'] },
     { unique: true, fields: ['cohort', 'class_name'] },
   ],
 });

@@ -3,23 +3,25 @@
  * 用于根据班级入学年份和当前学年计算年级等级
  */
 
+import { getSchoolConfig } from '../config/school.js';
+
 /**
  * 根据入学年份（cohort）和学年计算当前年级等级
- * @param cohort 入学年份，如"2024级"
- * @param academicYear 学年，如"2025-2026"
+ * @param cohort 入学年份，如"2024"
+ * @param academicYear 学年，如"2025"
  * @returns 年级等级（1-6），如果已毕业或未入学则返回null
  *
  * @example
- * calculateGradeLevel("2024级", "2024-2025") // 返回 1 (一年级)
- * calculateGradeLevel("2024级", "2025-2026") // 返回 2 (二年级)
- * calculateGradeLevel("2024级", "2026-2027") // 返回 3 (三年级)
+ * calculateGradeLevel("2024", "2024") // 返回 1 (一年级)
+ * calculateGradeLevel("2024", "2025") // 返回 2 (二年级)
+ * calculateGradeLevel("2024", "2026") // 返回 3 (三年级)
  */
 export function calculateGradeLevel(cohort: string, academicYear: string): number | null {
   // 提取入学年份数字
   const cohortYear = parseInt(cohort.replace(/级$/, ''));
 
-  // 提取学年的起始年份
-  const currentYear = parseInt(academicYear.split('-')[0]);
+  // 学年现在是单个年份
+  const currentYear = parseInt(academicYear);
 
   // 计算年级等级
   const gradeLevel = currentYear - cohortYear + 1;
@@ -51,31 +53,38 @@ export function getGradeName(gradeLevel: number): string {
 }
 
 /**
- * 判断班级在指定学年是否已毕业
- * @param cohort 入学年份，如"2024级"
- * @param academicYear 学年，如"2027-2028"
- * @param schoolYears 学制年数，默认3年
+ * 获取班级的预计毕业日期（精确到日）
+ * @param cohort 入学年份，如"2024"或"2024级"
+ * @returns 毕业日期 Date 对象
+ */
+export function getGraduationDate(cohort: string): Date {
+  const config = getSchoolConfig();
+  const cohortYear = parseInt(cohort.replace(/级$/, ''));
+  const graduationYear = cohortYear + config.schoolYears;
+
+  // 月份-1是因为 Date 的月份从0开始
+  return new Date(graduationYear, config.graduationMonth - 1, config.graduationDay);
+}
+
+/**
+ * 判断班级当前是否已毕业（基于当前时间）
+ * @param cohort 入学年份，如"2024"或"2024级"
  * @returns 是否已毕业
  */
-export function isGraduated(cohort: string, academicYear: string, schoolYears: number = 3): boolean {
-  const gradeLevel = calculateGradeLevel(cohort, academicYear);
-
-  if (gradeLevel === null) {
-    return true; // 超出范围视为已毕业
-  }
-
-  return gradeLevel > schoolYears;
+export function isGraduated(cohort: string): boolean {
+  const graduationDate = getGraduationDate(cohort);
+  return new Date() >= graduationDate;
 }
 
 /**
  * 获取班级的预计毕业年份
- * @param cohort 入学年份，如"2024级"
- * @param schoolYears 学制年数，默认3年
- * @returns 毕业年份，如"2027"
+ * @param cohort 入学年份，如"2024"或"2024级"
+ * @returns 毕业年份字符串，如"2027"
  */
-export function getGraduationYear(cohort: string, schoolYears: number = 3): string {
+export function getGraduationYear(cohort: string): string {
+  const config = getSchoolConfig();
   const cohortYear = parseInt(cohort.replace(/级$/, ''));
-  return (cohortYear + schoolYears - 1).toString();
+  return (cohortYear + config.schoolYears).toString();
 }
 
 /**
@@ -100,11 +109,11 @@ export async function getCurrentAcademicYear(): Promise<string> {
 
 /**
  * 验证班级入学年份格式是否合法
- * @param cohort 入学年份
+ * @param cohort 入学年份，如"2024"
  * @returns 是否合法
  */
 export function isValidCohort(cohort: string): boolean {
-  const pattern = /^\d{4}级$/;
+  const pattern = /^\d{4}$/;
   return pattern.test(cohort);
 }
 

@@ -3,6 +3,7 @@ import PhysicalTestForm from '../models/PhysicalTestForm.js';
 import FormTestItem from '../models/FormTestItem.js';
 import { defaultTestItems } from '../config/defaultTestItems.js';
 import sequelize from '../database/connection.js';
+import { validateCohorts } from '../utils/cohortHelper.js';
 
 /**
  * 获取所有表单（支持分页和状态筛选）
@@ -63,7 +64,7 @@ export const getById = async (req: Request, res: Response): Promise<void> => {
       include: [
         {
           model: FormTestItem,
-          as: 'testItems',
+          as: 'items',
         },
       ],
     });
@@ -100,6 +101,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
     const {
       formName,
       academicYear,
+      participatingCohorts,
       testDate,
       startTime,
       endTime,
@@ -115,14 +117,30 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // 验证参与年级
+    const cohortError = validateCohorts(participatingCohorts);
+    if (cohortError) {
+      res.status(400).json({
+        success: false,
+        error: cohortError,
+      });
+      return;
+    }
+
+    // 处理日期字段 - 将 'Invalid date' 或空字符串转换为 null
+    const processedTestDate = testDate && testDate !== 'Invalid date' ? testDate : null;
+    const processedStartTime = startTime && startTime !== 'Invalid date' ? startTime : null;
+    const processedEndTime = endTime && endTime !== 'Invalid date' ? endTime : null;
+
     // 创建表单
     const form = await PhysicalTestForm.create(
       {
         formName,
         academicYear,
-        testDate,
-        startTime,
-        endTime,
+        participatingCohorts,
+        testDate: processedTestDate,
+        startTime: processedStartTime,
+        endTime: processedEndTime,
         description,
         status: 'draft',
         createdBy: req.user?.id,
@@ -140,6 +158,8 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       isRequired: item.isRequired,
       sortOrder: item.sortOrder,
       scoringStandard: item.scoringStandard,
+      validationRules: item.validationRules,
+      isCalculated: item.isCalculated || false,
     }));
 
     await FormTestItem.bulkCreate(testItems, { transaction });
@@ -151,7 +171,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       include: [
         {
           model: FormTestItem,
-          as: 'testItems',
+          as: 'items',
         },
       ],
     });
@@ -181,6 +201,7 @@ export const update = async (req: Request, res: Response): Promise<void> => {
     const {
       formName,
       academicYear,
+      participatingCohorts,
       testDate,
       startTime,
       endTime,
@@ -206,12 +227,36 @@ export const update = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // 如果提供了 participatingCohorts,验证其合法性
+    if (participatingCohorts !== undefined) {
+      const cohortError = validateCohorts(participatingCohorts);
+      if (cohortError) {
+        res.status(400).json({
+          success: false,
+          error: cohortError,
+        });
+        return;
+      }
+    }
+
+    // 处理日期字段 - 将 'Invalid date' 或空字符串转换为 null
+    const processedTestDate = testDate !== undefined
+      ? (testDate && testDate !== 'Invalid date' ? testDate : null)
+      : form.get('testDate');
+    const processedStartTime = startTime !== undefined
+      ? (startTime && startTime !== 'Invalid date' ? startTime : null)
+      : form.get('startTime');
+    const processedEndTime = endTime !== undefined
+      ? (endTime && endTime !== 'Invalid date' ? endTime : null)
+      : form.get('endTime');
+
     await form.update({
       formName: formName || form.get('formName'),
       academicYear: academicYear || form.get('academicYear'),
-      testDate: testDate !== undefined ? testDate : form.get('testDate'),
-      startTime: startTime !== undefined ? startTime : form.get('startTime'),
-      endTime: endTime !== undefined ? endTime : form.get('endTime'),
+      participatingCohorts: participatingCohorts || form.get('participatingCohorts'),
+      testDate: processedTestDate,
+      startTime: processedStartTime,
+      endTime: processedEndTime,
       description: description !== undefined ? description : form.get('description'),
     });
 

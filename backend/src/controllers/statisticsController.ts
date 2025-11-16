@@ -327,7 +327,7 @@ export const getFormStats = async (req: Request, res: Response) => {
       include: [
         {
           model: FormTestItem,
-          as: 'testItems',
+          as: 'items',
           order: [['sortOrder', 'ASC']]
         }
       ]
@@ -408,8 +408,8 @@ export const getFormStats = async (req: Request, res: Response) => {
 
     // 各项目平均成绩
     const itemStats: any[] = [];
-    if (form.testItems) {
-      for (const item of form.testItems) {
+    if (form.items) {
+      for (const item of form.items) {
         const itemScores: number[] = [];
 
         records.forEach(record => {

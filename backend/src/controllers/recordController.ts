@@ -8,6 +8,7 @@ import StudentClassRelation from '../models/StudentClassRelation.js';
 import Class from '../models/Class.js';
 import sequelize from '../database/connection.js';
 import { calculateBatchScores, calculateTotalScore } from '../utils/scoreCalculator.js';
+import { canClassParticipate, getCohortsDisplay } from '../utils/cohortHelper.js';
 
 /**
  * 获取班级学生列表（用于录入）
@@ -50,6 +51,17 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
       });
     }
 
+    // 验证班级的年级是否在表单允许范围内
+    const classCohort = classInfo.cohort;
+    const formCohorts = form.participatingCohorts;
+
+    if (!canClassParticipate(classCohort, formCohorts)) {
+      return res.status(403).json({
+        success: false,
+        message: `该班级(${classCohort}级)不在本次体测允许范围内。允许的年级: ${getCohortsDisplay(formCohorts)}`
+      });
+    }
+
     // 获取该班级在指定学年的所有学生
     const year = academicYear || form.academicYear;
     const studentRelations = await StudentClassRelation.findAll({
@@ -68,14 +80,16 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
 
     // 获取这些学生在该表单下的体测记录
     const studentIds = studentRelations.map(rel => rel.studentId);
-    const records = await PhysicalTestRecord.findAll({
-      where: {
-        formId,
-        studentId: studentIds
-      }
-    });
+    const records = studentIds.length > 0
+      ? await PhysicalTestRecord.findAll({
+          where: {
+            formId,
+            studentId: studentIds
+          }
+        })
+      : [];
 
-    // 组织数据：学生 + 对应的记录 + 适用的测试项目
+    // 组织数据：将学生信息展平，testItems 和 record 作为附加字段
     const studentsWithRecords = studentRelations.map(relation => {
       const student = relation.student;
       const record = records.find(r => r.studentId === student.id);
@@ -85,17 +99,16 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
         return item.genderLimit === null || item.genderLimit === student.gender;
       });
 
+      // 展平结构：学生属性在顶层，testItems 和 record 作为额外字段
       return {
-        student: {
-          id: student.id,
-          studentIdNational: student.studentIdNational,
-          studentIdSchool: student.studentIdSchool,
-          name: student.name,
-          gender: student.gender,
-          birthDate: student.birthDate
-        },
-        testItems: applicableItems,
-        record: record ? {
+        id: student.id,
+        studentIdNational: student.studentIdNational,
+        studentIdSchool: student.studentIdSchool,
+        name: student.name,
+        gender: student.gender,
+        birthDate: student.birthDate,
+        _testItems: applicableItems,
+        _record: record ? {
           id: record.id,
           testData: record.testData,
           scores: record.scores,
@@ -107,21 +120,7 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: {
-        form: {
-          id: form.id,
-          formName: form.formName,
-          academicYear: form.academicYear,
-          testDate: form.testDate
-        },
-        class: {
-          id: classInfo.id,
-          cohort: classInfo.cohort,
-          className: classInfo.className,
-          classAccount: classInfo.classAccount
-        },
-        students: studentsWithRecords
-      }
+      data: studentsWithRecords
     });
   } catch (error: any) {
     console.error('获取班级学生列表失败:', error);
@@ -141,7 +140,16 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
 
   try {
     const { formId, studentId } = req.params;
-    const { testData } = req.body;
+    const { testData, classId } = req.body;
+
+    // 验证 classId
+    if (!classId) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: '缺少班级信息'
+      });
+    }
 
     // 验证表单
     const form = await PhysicalTestForm.findByPk(formId);
@@ -195,6 +203,7 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
       // 更新现有记录
       await record.update(
         {
+          classId: Number(classId),
           testData,
           scores,
           totalScore,
@@ -208,6 +217,7 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
         {
           formId: Number(formId),
           studentId: Number(studentId),
+          classId: Number(classId),
           testData,
           scores,
           totalScore,
@@ -271,7 +281,12 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
     const results = [];
 
     for (const recordData of records) {
-      const { studentId, testData } = recordData;
+      const { studentId, classId, testData } = recordData;
+
+      // 验证 classId
+      if (!classId) {
+        continue; // 跳过缺少班级信息的记录
+      }
 
       // 获取学生信息
       const student = await Student.findByPk(studentId);
@@ -293,6 +308,7 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
         {
           formId: Number(formId),
           studentId: Number(studentId),
+          classId: Number(classId),
           testData,
           scores,
           totalScore,
@@ -342,7 +358,7 @@ export const getStudentRecord = async (req: Request, res: Response) => {
           include: [
             {
               model: FormTestItem,
-              as: 'testItems',
+              as: 'items',
               order: [['sortOrder', 'ASC']]
             }
           ]

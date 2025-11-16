@@ -1,6 +1,7 @@
 import express, { Router } from 'express';
 import * as studentController from '../controllers/studentController.js';
 import { authenticate, requireTeacher } from '../middleware/auth.js';
+import { upload } from '../middleware/upload.js';
 
 const router: Router = express.Router();
 
@@ -48,5 +49,12 @@ router.delete('/:id', requireTeacher, studentController.deleteStudent);
  * @access  Admin + Teacher
  */
 router.post('/:id/transfer', requireTeacher, studentController.transfer);
+
+/**
+ * @route   POST /api/students/batch-import
+ * @desc    批量导入学生（Excel文件）
+ * @access  Admin + Teacher
+ */
+router.post('/batch-import', requireTeacher, upload.single('file'), studentController.batchImport);
 
 export default router;
