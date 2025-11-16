@@ -145,8 +145,8 @@ const startServer = async (): Promise<void> => {
           console.log('   执行种子数据...');
           try {
             // 动态导入种子执行器
-            const { seedMigrator } = await import('./database/umzug.js');
-            await seedMigrator.up();
+            const { seeder } = await import('./database/umzug.js');
+            await seeder.up();
             console.log('✅ 种子数据已完成');
           } catch (error: any) {
             console.warn('⚠️  种子数据执行失败（可能已存在）:', error.message);
