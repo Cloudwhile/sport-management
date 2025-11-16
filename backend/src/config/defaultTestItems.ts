@@ -9,6 +9,7 @@ export interface DefaultTestItem {
   genderLimit?: 'male' | 'female' | null;
   isRequired: boolean;
   sortOrder: number;
+  weight?: number;
   scoringStandard?: Record<string, unknown>;
   validationRules?: {
     min?: number;
@@ -32,6 +33,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 1,
+    weight: 0,
     validationRules: {
       min: 100,
       max: 230,
@@ -49,6 +51,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 2,
+    weight: 0,
     validationRules: {
       min: 20,
       max: 200,
@@ -65,6 +68,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     itemUnit: '',
     genderLimit: null,
     isRequired: true,
+    weight: 15,
     sortOrder: 3,
     isCalculated: true, // BMI 由后端自动计算
     validationRules: {
@@ -91,6 +95,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 4,
+    weight: 15,
     validationRules: {
       min: 500,
       max: 8000,
