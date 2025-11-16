@@ -38,6 +38,11 @@ RUN npm run build:backend
 # 生产环境阶段
 FROM node:20-alpine
 
+# 设置环境变量
+ENV NODE_ENV=production \
+    APP_PORT=3000 \
+    APP_HOST=0.0.0.0
+
 # 设置工作目录
 WORKDIR /app
 

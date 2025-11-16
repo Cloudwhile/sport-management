@@ -64,15 +64,19 @@ import formRoutes from './routes/forms.js';
 import recordRoutes from './routes/records.js';
 import statisticsRoutes from './routes/statistics.js';
 
-// Swagger文档
-import swaggerUi from 'swagger-ui-express';
-import YAML from 'yamljs';
+// Swagger文档（仅在非生产环境启用）
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const swaggerDocument = YAML.load(join(__dirname, 'swagger', 'openapi.yaml'));
+
+let swaggerDocument: any = null;
+if (config.app.env !== 'production') {
+  const swaggerUi = await import('swagger-ui-express');
+  const YAML = await import('yamljs');
+  swaggerDocument = YAML.default.load(join(__dirname, 'swagger', 'openapi.yaml'));
+}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -83,11 +87,15 @@ app.use('/api/forms', formRoutes);
 app.use('/api/records', recordRoutes);
 app.use('/api/statistics', statisticsRoutes);
 
-// Swagger UI
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: '学校体测系统 API 文档',
-}));
+// Swagger UI（仅在非生产环境启用）
+if (config.app.env !== 'production' && swaggerDocument) {
+  const swaggerUi = await import('swagger-ui-express');
+  app.use('/api-docs', swaggerUi.default.serve, swaggerUi.default.setup(swaggerDocument, {
+    customCss: '.swagger-ui .topbar { display: none }',
+    customSiteTitle: '学校体测系统 API 文档',
+  }));
+  console.log('📚 Swagger API 文档已启用: /api-docs');
+}
 
 // 静态文件服务（前端构建文件）
 import path from 'path';
