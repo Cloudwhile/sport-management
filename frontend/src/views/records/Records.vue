@@ -69,6 +69,7 @@ const canScrollRight = ref(false)
 const searchQuery = ref('')
 const searchInputRef = ref<HTMLInputElement | null>(null)
 const highlightedStudentId = ref<number | null>(null)
+const currentMatchIndex = ref(0) // 当前匹配结果的索引
 
 // 表单相关
 const forms = ref<PhysicalTestForm[]>([])
@@ -77,6 +78,7 @@ const selectedForm = ref<PhysicalTestFormWithItems | null>(null)
 // 班级相关
 const classes = ref<Class[]>([])
 const selectedClass = ref<Class | null>(null)
+const cohortFilter = ref<string>('') // 年级筛选
 
 // 学生和体测数据
 const students = ref<Student[]>([])
@@ -101,11 +103,16 @@ const stepTitle = computed(() => {
   }
 })
 
-// 获取表单列表
+// 获取表单列表（加载所有已发布的表单）
 const fetchForms = async () => {
   try {
     loading.value = true
-    const response = await formsAPI.getForms({ status: FormStatus.PUBLISHED })
+    // 使用大的 pageSize 来获取所有已发布的表单
+    const response = await formsAPI.getForms({
+      status: FormStatus.PUBLISHED,
+      page: 1,
+      pageSize: 1000
+    })
     forms.value = response.data
   } catch (error: any) {
     toast.error(error.message || '获取表单列表失败')
@@ -138,11 +145,12 @@ const selectForm = async (form: PhysicalTestForm) => {
   }
 }
 
-// 获取班级列表
+// 获取班级列表（加载所有班级）
 const fetchClasses = async () => {
   try {
     loading.value = true
-    const response = await classesAPI.getClasses()
+    // 使用大的 limit 来获取所有班级
+    const response = await classesAPI.getClasses({ page: 1, pageSize: 1000 })
     classes.value = response.data
   } catch (error: any) {
     toast.error(error.message || '获取班级列表失败')
@@ -156,7 +164,29 @@ const filteredClasses = computed(() => {
   if (!selectedForm.value) return []
 
   const participatingCohorts = selectedForm.value.participatingCohorts || []
-  return classes.value.filter(cls => participatingCohorts.includes(cls.cohort))
+
+  // 先按表单的参与年级过滤
+  let filtered = classes.value.filter(cls => participatingCohorts.includes(cls.cohort))
+
+  // 再按用户选择的年级过滤
+  if (cohortFilter.value) {
+    filtered = filtered.filter(cls => cls.cohort === cohortFilter.value)
+  }
+
+  return filtered
+})
+
+// 获取所有可选的年级（从参与表单的班级中提取）
+const availableCohorts = computed(() => {
+  if (!selectedForm.value) return []
+
+  const participatingCohorts = selectedForm.value.participatingCohorts || []
+  const cohorts = classes.value
+    .filter(cls => participatingCohorts.includes(cls.cohort))
+    .map(cls => cls.cohort)
+
+  // 去重并排序
+  return [...new Set(cohorts)].sort((a, b) => b.localeCompare(a))
 })
 
 // 判断是否没有符合条件的班级
@@ -167,13 +197,42 @@ const noEligibleClasses = computed(() =>
 // 计算已填写学生数量
 const filledStudentsCount = computed(() => {
   let count = 0
-  testDataMap.value.forEach((data) => {
-    if (Object.keys(data).length > 0) {
+  students.value.forEach(student => {
+    if (isStudentDataComplete(student.id, student.gender)) {
       count++
     }
   })
   return count
 })
+
+// 判断学生数据是否填写完整
+const isStudentDataComplete = (studentId: number, studentGender: Gender): boolean => {
+  const data = testDataMap.value.get(studentId)
+  if (!data || Object.keys(data).length === 0) return false
+
+  // 获取该学生需要填写的所有必填项目
+  const requiredItems = selectedForm.value?.items?.filter(item => {
+    // 过滤掉不需要填写的项目（计算项）
+    if (item.isCalculated) return false
+
+    // 过滤掉性别不匹配的项目
+    if (item.genderLimit && item.genderLimit !== studentGender) return false
+
+    // 只考虑必填项
+    return item.isRequired
+  }) || []
+
+  // 检查所有必填项是否都已填写
+  for (const item of requiredItems) {
+    const value = data[item.itemCode]
+    // 检查值是否存在且不为空字符串
+    if (value === undefined || value === null || value === '') {
+      return false
+    }
+  }
+
+  return true
+}
 
 // 计算填写完整度
 const completeness = computed(() => {
@@ -181,10 +240,22 @@ const completeness = computed(() => {
   return Math.round((filledStudentsCount.value / students.value.length) * 100)
 })
 
-// 判断学生是否已填写数据
+// 判断学生是否已填写数据（任意数据）
 const hasDraftData = (studentId: number): boolean => {
   const data = testDataMap.value.get(studentId)
   return data ? Object.keys(data).length > 0 : false
+}
+
+// 获取学生数据填写状态
+const getStudentDataStatus = (studentId: number, studentGender: Gender): 'complete' | 'partial' | 'empty' => {
+  const data = testDataMap.value.get(studentId)
+  if (!data || Object.keys(data).length === 0) return 'empty'
+
+  if (isStudentDataComplete(studentId, studentGender)) {
+    return 'complete'
+  }
+
+  return 'partial'
 }
 
 // 获取草稿相对时间
@@ -209,10 +280,17 @@ const matchedStudents = computed(() => {
   })
 })
 
-// 搜索学生并跳转
+// 监听搜索内容变化，重置索引
+watch(searchQuery, () => {
+  currentMatchIndex.value = 0
+  highlightedStudentId.value = null
+})
+
+// 搜索学生并跳转（支持循环）
 const searchStudent = () => {
   if (!searchQuery.value.trim()) {
     highlightedStudentId.value = null
+    currentMatchIndex.value = 0
     return
   }
 
@@ -220,16 +298,31 @@ const searchStudent = () => {
   if (matched.length === 0) {
     toast.warning('未找到匹配的学生')
     highlightedStudentId.value = null
+    currentMatchIndex.value = 0
     return
   }
 
-  if (matched.length > 1) {
-    toast.info(`找到 ${matched.length} 个匹配结果，跳转到第一个`)
+  // 判断是否需要跳转到下一个结果
+  // 只有当前有高亮学生，且该学生在匹配列表中时，才跳转到下一个
+  const currentHighlightedInMatches = highlightedStudentId.value &&
+    matched.find(s => s.id === highlightedStudentId.value)
+
+  if (currentHighlightedInMatches) {
+    // 当前有高亮学生，跳转到下一个匹配结果（循环）
+    currentMatchIndex.value = (currentMatchIndex.value + 1) % matched.length
+  } else {
+    // 当前没有高亮学生，或者高亮的学生不在匹配列表中，从第一个开始
+    currentMatchIndex.value = 0
   }
 
-  // 跳转到第一个匹配的学生
-  const targetStudent = matched[0]
+  // 跳转到目标学生
+  const targetStudent = matched[currentMatchIndex.value]
   highlightedStudentId.value = targetStudent.id
+
+  // 显示提示信息
+  if (matched.length > 1) {
+    toast.info(`跳转到第 ${currentMatchIndex.value + 1} 个结果（共 ${matched.length} 个）`)
+  }
 
   // 滚动到该学生行
   setTimeout(() => {
@@ -243,11 +336,11 @@ const searchStudent = () => {
         if (firstInput) {
           firstInput.focus()
         }
-      }, 500)
+      }, 300)
     }
   }, 100)
 
-  // 3秒后取消高亮
+  // 3秒后取消高亮（但保留索引，以便下次按Enter继续循环）
   setTimeout(() => {
     highlightedStudentId.value = null
   }, 3000)
@@ -257,17 +350,40 @@ const searchStudent = () => {
 const clearSearch = () => {
   searchQuery.value = ''
   highlightedStudentId.value = null
+  currentMatchIndex.value = 0
 }
 
 // 全局快捷键监听
 const handleGlobalKeydown = (event: KeyboardEvent) => {
-  // Enter键聚焦搜索框
+  // Enter 键处理逻辑
   if (event.key === 'Enter' && currentStep.value === Step.INPUT_DATA) {
-    // 如果当前焦点不在搜索框或输入框上
     const activeElement = document.activeElement
     const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA'
 
-    if (!isInput || activeElement === searchInputRef.value) {
+    // 如果焦点在搜索框，执行搜索（循环跳转）
+    if (activeElement === searchInputRef.value) {
+      event.preventDefault()
+      searchStudent()
+      return
+    }
+
+    // 如果当前有高亮学生且有搜索内容，按 Enter 继续循环到下一个
+    if (highlightedStudentId.value && searchQuery.value.trim()) {
+      event.preventDefault()
+      searchStudent()
+      return
+    }
+
+    // 如果焦点在其他输入框，且当前没有高亮学生，则跳回搜索框
+    if (isInput && !highlightedStudentId.value) {
+      event.preventDefault()
+      searchInputRef.value?.focus()
+      searchInputRef.value?.select()
+      return
+    }
+
+    // 如果焦点不在任何输入框，跳回搜索框
+    if (!isInput) {
       event.preventDefault()
       searchInputRef.value?.focus()
       searchInputRef.value?.select()
@@ -898,6 +1014,40 @@ watch(currentStep, (newStep) => {
 
         <!-- 步骤 2: 选择班级 -->
         <div v-else-if="currentStep === Step.SELECT_CLASS">
+          <!-- 年级筛选 -->
+          <div v-if="availableCohorts.length > 0" class="mb-4 flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-700">筛选年级：</span>
+            <div class="flex items-center gap-2">
+              <button
+                :class="[
+                  'px-3 py-1.5 text-sm rounded-lg transition-colors',
+                  !cohortFilter
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+                @click="cohortFilter = ''"
+              >
+                全部
+              </button>
+              <button
+                v-for="cohort in availableCohorts"
+                :key="cohort"
+                :class="[
+                  'px-3 py-1.5 text-sm rounded-lg transition-colors',
+                  cohortFilter === cohort
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                ]"
+                @click="cohortFilter = cohort"
+              >
+                {{ cohort }} 级
+              </button>
+            </div>
+            <span v-if="cohortFilter" class="text-sm text-gray-500">
+              （显示 {{ filteredClasses.length }} 个班级）
+            </span>
+          </div>
+
           <div v-if="noEligibleClasses" class="text-center py-12">
             <p class="text-gray-500 mb-2">该表单没有符合条件的班级可以录入数据</p>
             <p class="text-sm text-gray-400">
@@ -963,7 +1113,7 @@ watch(currentStep, (newStep) => {
             <!-- 草稿状态显示 -->
             <div class="flex items-center gap-4 text-sm">
               <div class="flex items-center gap-2">
-                <span class="text-gray-600">已填写:</span>
+                <span class="text-gray-600">已填写完整:</span>
                 <span
                   :class="[
                     'font-semibold',
@@ -989,8 +1139,59 @@ watch(currentStep, (newStep) => {
                 <span class="text-gray-500">{{ draftRelativeTime }}</span>
               </div>
               <div v-if="filledStudentsCount < students.length" class="flex items-center gap-2 text-orange-600">
-                <span>⚠️ 需填写所有学生数据才能提交</span>
+                <span>⚠️ 需填写完整所有学生数据才能提交</span>
               </div>
+            </div>
+
+            <!-- 颜色图例 -->
+            <div class="flex items-center gap-4 text-xs text-gray-600 bg-gray-50 rounded-lg p-2">
+              <span class="font-semibold">状态图例:</span>
+              <div class="flex items-center gap-1">
+                <div class="w-4 h-4 bg-green-50 border border-green-200 rounded"></div>
+                <span>已完成（所有必填项已填写）</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <div class="w-4 h-4 bg-yellow-50 border border-yellow-200 rounded"></div>
+                <span>未完成（部分项目未填写）</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <div class="w-4 h-4 bg-white border border-gray-200 rounded"></div>
+                <span>未填写</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <div class="w-4 h-4 bg-blue-100 border border-blue-400 rounded"></div>
+                <span>当前搜索定位</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 快捷键提示 -->
+          <div class="mb-2 flex items-center gap-4 text-xs text-gray-500">
+            <div class="flex items-center gap-1">
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">Tab</kbd>
+              <span>跳转到下一个输入框</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">Enter</kbd>
+              <span>循环切换搜索结果</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">Ctrl</kbd>
+              <span>+</span>
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">F</kbd>
+              <span>快速聚焦搜索框</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">Ctrl</kbd>
+              <span>+</span>
+              <kbd class="px-2 py-0.5 bg-gray-100 border border-gray-300 rounded text-gray-700 font-mono">S</kbd>
+              <span>打开提交预览</span>
+            </div>
+            <div class="flex items-center gap-1 text-blue-600">
+              <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+              </svg>
+              <span>数据自动保存到本地草稿</span>
             </div>
           </div>
 
@@ -1000,14 +1201,16 @@ watch(currentStep, (newStep) => {
               ref="searchInputRef"
               v-model="searchQuery"
               type="text"
-              placeholder="输入学号或姓名搜索 (Enter/Ctrl+F)"
+              placeholder="输入学号或姓名搜索..."
               class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              @keydown.enter="searchStudent"
             />
             <Button @click="searchStudent" variant="primary">搜索</Button>
             <Button v-if="searchQuery" @click="clearSearch" variant="secondary">清空</Button>
-            <span v-if="matchedStudents.length > 0 && searchQuery" class="text-sm text-gray-600">
-              找到 {{ matchedStudents.length }} 个匹配结果
+            <span v-if="matchedStudents.length > 1 && searchQuery && highlightedStudentId" class="text-sm text-blue-600">
+              第 {{ currentMatchIndex + 1 }} / {{ matchedStudents.length }} 个结果
+            </span>
+            <span v-else-if="matchedStudents.length === 1 && searchQuery" class="text-sm text-gray-600">
+              找到 1 个匹配结果
             </span>
             <span v-else-if="searchQuery && matchedStudents.length === 0" class="text-sm text-red-600">
               未找到匹配结果
@@ -1077,15 +1280,17 @@ watch(currentStep, (newStep) => {
                   :data-student-id="student.id"
                   :class="[
                     'hover:bg-gray-50 transition-colors',
-                    hasDraftData(student.id) ? 'bg-blue-50' : '',
-                    highlightedStudentId === student.id ? 'ring-2 ring-yellow-400 bg-yellow-50' : ''
+                    getStudentDataStatus(student.id, student.gender) === 'complete' ? 'bg-green-50' : '',
+                    getStudentDataStatus(student.id, student.gender) === 'partial' ? 'bg-yellow-50' : '',
+                    highlightedStudentId === student.id ? 'ring-2 ring-blue-400 bg-blue-100' : ''
                   ]"
                 >
                   <td
                     :class="[
                       'px-4 py-3 text-sm text-gray-900 whitespace-nowrap sticky left-0',
-                      hasDraftData(student.id) ? 'bg-blue-50' : 'bg-white',
-                      highlightedStudentId === student.id ? 'bg-yellow-50' : ''
+                      getStudentDataStatus(student.id, student.gender) === 'complete' ? 'bg-green-50' : '',
+                      getStudentDataStatus(student.id, student.gender) === 'partial' ? 'bg-yellow-50' : 'bg-white',
+                      highlightedStudentId === student.id ? 'bg-blue-100' : ''
                     ]"
                   >
                     {{ student.studentIdSchool }}
@@ -1093,11 +1298,29 @@ watch(currentStep, (newStep) => {
                   <td
                     :class="[
                       'px-4 py-3 text-sm font-medium text-gray-900 whitespace-nowrap sticky left-0',
-                      hasDraftData(student.id) ? 'bg-blue-50' : 'bg-white',
-                      highlightedStudentId === student.id ? 'bg-yellow-50' : ''
+                      getStudentDataStatus(student.id, student.gender) === 'complete' ? 'bg-green-50' : '',
+                      getStudentDataStatus(student.id, student.gender) === 'partial' ? 'bg-yellow-50' : 'bg-white',
+                      highlightedStudentId === student.id ? 'bg-blue-100' : ''
                     ]"
                   >
-                    {{ student.name }}
+                    <div class="flex items-center gap-2">
+                      <span>{{ student.name }}</span>
+                      <!-- 状态标识 -->
+                      <span
+                        v-if="getStudentDataStatus(student.id, student.gender) === 'complete'"
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+                        title="所有必填项已填写完整"
+                      >
+                        ✓ 完成
+                      </span>
+                      <span
+                        v-else-if="getStudentDataStatus(student.id, student.gender) === 'partial'"
+                        class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800"
+                        title="部分项目未填写"
+                      >
+                        ⚠ 未完成
+                      </span>
+                    </div>
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-900">
                     {{ getGenderText(student.gender) }}
@@ -1176,15 +1399,7 @@ watch(currentStep, (newStep) => {
         </div>
       </Card>
 
-      <!-- 快捷键提示 -->
-      <div v-if="currentStep === Step.INPUT_DATA" class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <p class="text-sm text-blue-800">
-          <strong>快捷键提示：</strong>
-          <span class="ml-4">Ctrl+S 打开提交预览</span>
-          <span class="ml-4 text-blue-600">✓ 数据自动保存到本地草稿</span>
-        </p>
       </div>
-    </div>
 
     <!-- 草稿恢复对话框 -->
     <Modal v-model="showDraftDialog" title="发现未保存的草稿" size="md">

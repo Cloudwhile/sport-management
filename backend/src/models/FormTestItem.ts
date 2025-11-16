@@ -10,6 +10,7 @@ export interface FormTestItemAttributes {
   genderLimit?: 'male' | 'female';
   isRequired: boolean;
   sortOrder: number;
+  weight?: number;
   scoringStandard?: Record<string, unknown>;
   validationRules?: {
     min?: number;
@@ -68,6 +69,12 @@ const FormTestItem = sequelize.define<Model<FormTestItemAttributes>>('FormTestIt
     defaultValue: 0,
     field: 'sort_order',
     comment: '排序',
+  },
+  weight: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    allowNull: true,
+    comment: '权重（百分比），用于计算总分，如 15 表示占总分的15%',
   },
   scoringStandard: {
     type: DataTypes.JSONB,

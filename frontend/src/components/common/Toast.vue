@@ -94,8 +94,8 @@ onMounted(() => {
           <div class="flex-shrink-0">
             <component :is="typeConfig.icon" :class="['h-6 w-6', typeConfig.iconClass]" />
           </div>
-          <div class="ml-3 w-0 flex-1 pt-0.5">
-            <p :class="['text-sm font-medium', typeConfig.textClass]">
+          <div class="ml-3 flex-1 pt-0.5">
+            <p :class="['text-sm font-medium break-words', typeConfig.textClass]">
               {{ message }}
             </p>
           </div>

@@ -76,10 +76,12 @@ const studentsAPI = {
   /**
    * 批量导入学生
    * @param file Excel文件
+   * @param academicYear 学年
    */
-  batchImport(file: File): Promise<any> {
+  batchImport(file: File, academicYear: string): Promise<any> {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('academicYear', academicYear)
 
     return http.post('/students/batch-import', formData, {
       headers: {

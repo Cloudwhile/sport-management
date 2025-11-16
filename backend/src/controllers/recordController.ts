@@ -7,7 +7,7 @@ import Student from '../models/Student.js';
 import StudentClassRelation from '../models/StudentClassRelation.js';
 import Class from '../models/Class.js';
 import sequelize from '../database/connection.js';
-import { calculateBatchScores, calculateTotalScore } from '../utils/scoreCalculator.js';
+import { calculateBatchScores, calculateTotalScore, calculateBMI, calculateGradeLevel } from '../utils/scoreCalculator.js';
 import { canClassParticipate, getCohortsDisplay } from '../utils/cohortHelper.js';
 
 /**
@@ -113,6 +113,7 @@ export const getClassStudentsForForm = async (req: Request, res: Response) => {
           testData: record.testData,
           scores: record.scores,
           totalScore: record.totalScore,
+          gradeLevel: record.gradeLevel,
           submittedAt: record.submittedAt
         } : null
       };
@@ -188,11 +189,25 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
       return item.genderLimit === null || item.genderLimit === student.gender;
     });
 
-    // 计算各项分数
-    const scores = calculateBatchScores(testData, applicableItems);
+    // 自动计算BMI（如果提供了身高和体重）
+    if (testData.height && testData.weight) {
+      try {
+        const height = parseFloat(testData.height.toString());
+        const weight = parseFloat(testData.weight.toString());
+        testData.bmi = calculateBMI(height, weight);
+      } catch (error) {
+        console.warn('BMI计算失败:', error);
+      }
+    }
 
-    // 计算总分
-    const totalScore = calculateTotalScore(scores);
+    // 计算各项分数（传入学生性别）
+    const scores = calculateBatchScores(testData, applicableItems, student.gender);
+
+    // 计算加权总分
+    const totalScore = calculateTotalScore(scores, applicableItems);
+
+    // 计算等级
+    const gradeLevel = calculateGradeLevel(totalScore);
 
     // 查找是否已存在记录
     let record = await PhysicalTestRecord.findOne({
@@ -207,6 +222,7 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
           testData,
           scores,
           totalScore,
+          gradeLevel,
           submittedAt: new Date()
         },
         { transaction }
@@ -221,6 +237,7 @@ export const createOrUpdateRecord = async (req: Request, res: Response) => {
           testData,
           scores,
           totalScore,
+          gradeLevel,
           submittedAt: new Date()
         },
         { transaction }
@@ -299,9 +316,29 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
         return item.genderLimit === null || item.genderLimit === student.gender;
       });
 
-      // 计算分数
-      const scores = calculateBatchScores(testData, applicableItems);
-      const totalScore = calculateTotalScore(scores);
+      // 自动计算BMI（如果提供了身高和体重）
+      if (testData.height && testData.weight) {
+        try {
+          const height = parseFloat(testData.height.toString());
+          const weight = parseFloat(testData.weight.toString());
+          testData.bmi = calculateBMI(height, weight);
+        } catch (error) {
+          console.warn('BMI计算失败:', error);
+        }
+      }
+
+      // 计算分数（传入学生性别）
+      const scores = calculateBatchScores(testData, applicableItems, student.gender);
+      const totalScore = calculateTotalScore(scores, applicableItems);
+      const gradeLevel = calculateGradeLevel(totalScore);
+
+      // 调试日志
+      console.log(`\n=== 学生 ${student.name} (${student.gender}) 的分数计算结果 ===`);
+      console.log('测试数据:', testData);
+      console.log('各项分数:', scores);
+      console.log('总分:', totalScore);
+      console.log('等级:', gradeLevel);
+      console.log('适用项目数量:', applicableItems.length);
 
       // 查找或创建记录
       const [record] = await PhysicalTestRecord.upsert(
@@ -312,6 +349,7 @@ export const batchCreateOrUpdateRecords = async (req: Request, res: Response) =>
           testData,
           scores,
           totalScore,
+          gradeLevel,
           submittedAt: new Date()
         },
         { transaction }

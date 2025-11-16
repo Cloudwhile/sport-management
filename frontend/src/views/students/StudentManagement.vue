@@ -55,6 +55,7 @@ const selectedFile = ref<File | null>(null)
 const isUploading = ref(false)
 const importResults = ref<any>(null)
 const isDragging = ref(false)
+const importAcademicYear = ref<string>(new Date().getFullYear().toString()) // 批量导入的学年
 
 // 表单数据
 const formData = reactive<CreateStudentRequest>({
@@ -363,6 +364,7 @@ const handleTransfer = async () => {
 const openBatchImportModal = () => {
   selectedFile.value = null
   importResults.value = null
+  importAcademicYear.value = new Date().getFullYear().toString() // 重置为当前年份
   showBatchImportModal.value = true
 }
 
@@ -419,10 +421,15 @@ const handleBatchImport = async () => {
     return
   }
 
+  if (!importAcademicYear.value) {
+    toast.error('请输入学年')
+    return
+  }
+
   try {
     isUploading.value = true
-    // http拦截器已经自动提取了 response.data，所以这里 response 就是 results 对象
-    const result = await studentsAPI.batchImport(selectedFile.value)
+    // 传递文件和学年参数
+    const result = await studentsAPI.batchImport(selectedFile.value, importAcademicYear.value)
 
     // 确保 result 存在且有效
     if (!result || typeof result !== 'object') {
@@ -990,6 +997,32 @@ onMounted(() => {
               <li><strong>出生日期</strong>：格式为 2009/08/08（可选）</li>
               <li><strong>身份证号</strong>：支持数字和字符串（可选）</li>
             </ul>
+          </div>
+
+          <!-- 学年输入 -->
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div class="flex items-start gap-3">
+              <svg class="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div class="flex-1">
+                <label class="block text-sm font-medium text-blue-900 mb-2">
+                  导入数据所属学年<span class="text-red-500">*</span>
+                </label>
+                <input
+                  v-model="importAcademicYear"
+                  type="text"
+                  placeholder="例如：2024"
+                  class="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p class="mt-2 text-xs text-blue-700">
+                  请输入导入数据所属的学年。例如：2024 表示学生在 2024 学年所在的班级
+                </p>
+                <p class="mt-1 text-xs text-blue-600">
+                  <strong>说明：</strong>班级名称"高中2023级1班"中的"2023"是入学年份（级别），学年是学生在该班级学习的年份
+                </p>
+              </div>
+            </div>
           </div>
 
           <!-- 文件上传区域 -->

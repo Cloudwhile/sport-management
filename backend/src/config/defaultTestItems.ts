@@ -9,6 +9,7 @@ export interface DefaultTestItem {
   genderLimit?: 'male' | 'female' | null;
   isRequired: boolean;
   sortOrder: number;
+  weight?: number; // 权重（百分比），用于计算总分，如 15 表示占总分的15%
   scoringStandard?: Record<string, unknown>;
   validationRules?: {
     min?: number;
@@ -32,6 +33,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 1,
+    weight: 0, // 身高不计分，仅用于计算BMI
     validationRules: {
       min: 100,
       max: 230,
@@ -49,6 +51,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 2,
+    weight: 0, // 体重不计分，仅用于计算BMI
     validationRules: {
       min: 20,
       max: 200,
@@ -66,6 +69,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 3,
+    weight: 15, // BMI占总分的15%
     isCalculated: true, // BMI 由后端自动计算
     validationRules: {
       min: 8,
@@ -91,6 +95,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 4,
+    weight: 15, // 肺活量占总分的15%
     validationRules: {
       min: 500,
       max: 8000,
@@ -120,6 +125,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 5,
+    weight: 20, // 50米跑占总分的20%
     validationRules: {
       min: 5,
       max: 30,
@@ -150,6 +156,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 6,
+    weight: 10, // 立定跳远占总分的10%
     validationRules: {
       min: 50,
       max: 350,
@@ -179,6 +186,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: null,
     isRequired: true,
     sortOrder: 7,
+    weight: 10, // 坐位体前屈占总分的10%
     validationRules: {
       min: -20,
       max: 50,
@@ -208,6 +216,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 8,
+    weight: 10, // 仰卧起坐占总分的10%（仅女生）
     validationRules: {
       min: 0,
       max: 100,
@@ -231,6 +240,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 9,
+    weight: 10, // 引体向上占总分的10%（仅男生）
     validationRules: {
       min: 0,
       max: 50,
@@ -254,6 +264,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'female',
     isRequired: true,
     sortOrder: 10,
+    weight: 20, // 800米跑占总分的20%（仅女生）
     validationRules: {
       min: 120,
       max: 600,
@@ -278,6 +289,7 @@ export const defaultTestItems: DefaultTestItem[] = [
     genderLimit: 'male',
     isRequired: true,
     sortOrder: 11,
+    weight: 20, // 1000米跑占总分的20%（仅男生）
     validationRules: {
       min: 150,
       max: 800,

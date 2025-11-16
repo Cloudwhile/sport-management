@@ -157,6 +157,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       genderLimit: item.genderLimit,
       isRequired: item.isRequired,
       sortOrder: item.sortOrder,
+      weight: item.weight || 0,
       scoringStandard: item.scoringStandard,
       validationRules: item.validationRules,
       isCalculated: item.isCalculated || false,

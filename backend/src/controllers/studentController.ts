@@ -463,6 +463,13 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    // 获取学年参数
+    const academicYear = req.body.academicYear;
+    if (!academicYear) {
+      res.status(400).json({ error: '请提供学年参数' });
+      return;
+    }
+
     // 解析 Excel 文件
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
@@ -481,8 +488,8 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
       }>,
     };
 
-    // 用于跟踪每个班级和学年的组合
-    const classCache = new Map<string, { classId: number; academicYear: string }>();
+    // 用于跟踪每个班级的缓存（不再包含学年，因为学年由用户统一指定）
+    const classCache = new Map<string, number>(); // key: cohort-className, value: classId
 
     // 处理每一行数据
     for (let i = 0; i < data.length; i++) {
@@ -536,9 +543,9 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
 
         // 查找或缓存班级
         const cacheKey = `${cohort}-${classNameOnly}`;
-        let classInfo = classCache.get(cacheKey);
+        let classId = classCache.get(cacheKey);
 
-        if (!classInfo) {
+        if (!classId) {
           // 查找班级
           let foundClass = await Class.findOne({
             where: {
@@ -564,11 +571,8 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
             console.log(`自动创建班级：${cohort}级 ${classNameOnly}，账号：${classAccount}`);
           }
 
-          classInfo = {
-            classId: foundClass.get('id') as number,
-            academicYear: cohort, // 使用入学年份作为学年
-          };
-          classCache.set(cacheKey, classInfo);
+          classId = foundClass.get('id') as number;
+          classCache.set(cacheKey, classId);
         }
 
         // 验证必填字段
@@ -603,40 +607,6 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           results.errors.push({
             row: rowNumber,
             error: `性别代码错误，应为1（男）或2（女），实际为"${genderCode}"`,
-            data: row,
-            type: 'error',
-          });
-          results.failed++;
-          continue;
-        }
-
-        // 检查学籍号是否已存在
-        const existingNational = await Student.findOne({
-          where: { studentIdNational },
-        });
-        if (existingNational) {
-          results.errors.push({
-            row: rowNumber,
-            error: `学籍号 ${studentIdNational} 已存在`,
-            data: row,
-            type: 'error',
-          });
-          results.failed++;
-          continue;
-        }
-
-        // 生成学校学号（使用入学年份+班级编号+序号的方式，或使用学籍号）
-        // 这里简单使用学籍号作为学校学号，你可以根据实际需求调整
-        const studentIdSchool = studentIdNational;
-
-        // 检查学校学号是否已存在
-        const existingSchool = await Student.findOne({
-          where: { studentIdSchool },
-        });
-        if (existingSchool) {
-          results.errors.push({
-            row: rowNumber,
-            error: `学校学号 ${studentIdSchool} 已存在`,
             data: row,
             type: 'error',
           });
@@ -699,26 +669,110 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           }
         }
 
-        // 创建学生
-        const student = await Student.create({
-          studentIdNational,
-          studentIdSchool,
-          name,
-          gender,
-          birthDate,
-          idCardNumber,
-          ethnicityCode,
+        // 检查学籍号是否已存在
+        const existingStudent = await Student.findOne({
+          where: { studentIdNational },
         });
 
-        // 创建学生-班级关联
-        await StudentClassRelation.create({
-          studentId: student.get('id') as number,
-          classId: classInfo.classId,
-          academicYear: classInfo.academicYear,
-          isActive: true,
+        let student: any;
+        let isUpdate = false;
+
+        if (existingStudent) {
+          // 学生已存在，更新学生信息
+          isUpdate = true;
+          await existingStudent.update({
+            name,
+            gender,
+            birthDate,
+            idCardNumber,
+            ethnicityCode,
+          });
+          student = existingStudent;
+        } else {
+          // 学生不存在，创建新学生
+          const studentIdSchool = studentIdNational; // 使用学籍号作为学校学号
+
+          student = await Student.create({
+            studentIdNational,
+            studentIdSchool,
+            name,
+            gender,
+            birthDate,
+            idCardNumber,
+            ethnicityCode,
+          });
+        }
+
+        // 处理班级关联
+        const studentId = student.get('id') as number;
+
+        // 查找该学生当前激活的班级关系
+        const currentActiveRelation = await StudentClassRelation.findOne({
+          where: {
+            studentId,
+            isActive: true,
+          },
         });
+
+        // 检查是否需要更新班级关系
+        let needUpdate = true;
+        if (currentActiveRelation) {
+          const currentClassId = currentActiveRelation.get('classId') as number;
+          const currentAcademicYear = currentActiveRelation.get('academicYear') as string;
+
+          // 如果当前班级和学年都一致，不需要更新
+          if (currentClassId === classId && currentAcademicYear === academicYear) {
+            needUpdate = false;
+          }
+        }
+
+        if (needUpdate) {
+          // 将之前的所有关系设置为 inactive
+          await StudentClassRelation.update(
+            { isActive: false },
+            {
+              where: {
+                studentId,
+                isActive: true,
+              },
+            }
+          );
+
+          // 检查是否已经存在相同班级和学年的关系（可能之前被设为 inactive）
+          const existingRelation = await StudentClassRelation.findOne({
+            where: {
+              studentId,
+              classId: classId,
+              academicYear: academicYear,
+            },
+          });
+
+          if (existingRelation) {
+            // 已存在该关系，重新激活
+            await existingRelation.update({ isActive: true });
+          } else {
+            // 不存在，创建新的班级关系
+            await StudentClassRelation.create({
+              studentId,
+              classId: classId,
+              academicYear: academicYear,
+              isActive: true,
+            });
+          }
+        }
 
         results.success++;
+
+        // 如果是更新操作，添加一个提示
+        if (isUpdate) {
+          results.errors.push({
+            row: rowNumber,
+            error: `学生 ${name}(${studentIdNational}) 已存在，已更新其信息和班级关系`,
+            data: row,
+            type: 'warning',
+          });
+          results.warnings++;
+        }
       } catch (error) {
         console.error(`第 ${rowNumber} 行导入失败:`, (error as Error).message, '数据:', row);
         results.errors.push({
