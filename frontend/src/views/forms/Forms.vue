@@ -189,18 +189,41 @@ onUnmounted(() => {
 const openCreateModal = async () => {
   isEditing.value = false
   editingFormId.value = null
+
+  // 获取当前年份
+  const currentYear = new Date().getFullYear()
+
+  // 加载可用年级
+  await fetchAvailableCohorts()
+
+  // 计算默认参与年级（今年和前两年，共三年）
+  const defaultCohorts: string[] = []
+  for (let i = 0; i <= 2; i++) {
+    const cohort = (currentYear - i).toString()
+    // 只添加存在的年级
+    if (availableCohorts.value.includes(cohort)) {
+      defaultCohorts.push(cohort)
+    }
+  }
+
+  // 获取今天的日期（YYYY-MM-DD格式）
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  const todayStr = `${year}-${month}-${day}`
+
   formData.value = {
-    formName: '',
-    academicYear: '',
-    participatingCohorts: [],
-    testDate: '',
+    formName: `${currentYear}年国家体质测试数据收集`,
+    academicYear: currentYear.toString(),
+    participatingCohorts: defaultCohorts,
+    testDate: todayStr,
     startTime: '',
     endTime: '',
     description: ''
   }
   formErrors.value = {}
   showCohortsDropdown.value = false
-  await fetchAvailableCohorts()
   showFormModal.value = true
 }
 

@@ -38,6 +38,11 @@ const goBack = () => {
   router.push('/classes')
 }
 
+// 跳转到学生详情
+const navigateToStudent = (studentId: number) => {
+  router.push({ name: 'StudentDetail', params: { id: studentId } })
+}
+
 onMounted(() => {
   loadClassDetail()
 })
@@ -182,7 +187,8 @@ onMounted(() => {
               <tr
                 v-for="(student, index) in classDetail.students"
                 :key="student.id"
-                class="hover:bg-gray-50 transition-colors"
+                @click="navigateToStudent(student.id)"
+                class="hover:bg-gray-50 cursor-pointer transition-colors"
               >
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {{ index + 1 }}

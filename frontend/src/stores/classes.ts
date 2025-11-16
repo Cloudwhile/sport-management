@@ -138,13 +138,14 @@ export const useClassesStore = defineStore('classes', () => {
   /**
    * 重置班级密码
    * @param id 班级ID
+   * @param password 新密码
    */
-  async function resetPassword(id: number) {
+  async function resetPassword(id: number, password: string) {
     try {
       loading.value = true
       error.value = null
 
-      const result = await classesAPI.resetPassword(id)
+      const result = await classesAPI.resetPassword(id, password)
 
       return result
     } catch (err: any) {

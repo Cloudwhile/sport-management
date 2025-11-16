@@ -6,6 +6,7 @@ import {
   Class,
   StudentClassRelation,
 } from '../models/index.js';
+import { hashPassword } from '../utils/password.js';
 
 // 获取学生列表
 export const getAll = async (req: Request, res: Response): Promise<void> => {
@@ -14,6 +15,10 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       page = 1,
       pageSize = 10,
       search = '',
+      name,
+      studentIdNational,
+      studentIdSchool,
+      gender,
       classId,
       gradeId,
       academicYear,
@@ -26,13 +31,30 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
     const whereConditions: any = {};
     const relationWhereConditions: any = { isActive: true };
 
-    // 搜索条件（姓名或学号）
+    // 通用搜索条件（姓名或学号）
     if (search) {
       whereConditions[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
         { studentIdNational: { [Op.iLike]: `%${search}%` } },
         { studentIdSchool: { [Op.iLike]: `%${search}%` } },
       ];
+    }
+
+    // 单独的筛选条件
+    if (name) {
+      whereConditions.name = { [Op.iLike]: `%${name}%` };
+    }
+
+    if (studentIdNational) {
+      whereConditions.studentIdNational = { [Op.iLike]: `%${studentIdNational}%` };
+    }
+
+    if (studentIdSchool) {
+      whereConditions.studentIdSchool = { [Op.iLike]: `%${studentIdSchool}%` };
+    }
+
+    if (gender) {
+      whereConditions.gender = gender;
     }
 
     // 班级筛选
@@ -559,7 +581,9 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
             // 生成班级账号：格式为 class_cohort_classNumber，如 class_2024_01
             const classAccount = `class_${cohort}_${classNumber.padStart(2, '0')}`;
             // 生成默认密码：格式为 cohort+班级编号，如 202401
-            const classPassword = `${cohort}${classNumber.padStart(2, '0')}`;
+            const defaultPassword = `${cohort}${classNumber.padStart(2, '0')}`;
+            // 对密码进行 hash
+            const classPassword = await hashPassword(defaultPassword);
 
             foundClass = await Class.create({
               cohort,
@@ -568,7 +592,7 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
               classPassword,
             });
 
-            console.log(`自动创建班级：${cohort}级 ${classNameOnly}，账号：${classAccount}`);
+            console.log(`自动创建班级：${cohort}级 ${classNameOnly}，账号：${classAccount}，默认密码：${defaultPassword}`);
           }
 
           classId = foundClass.get('id') as number;

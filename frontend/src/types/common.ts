@@ -3,7 +3,8 @@
 // 用户角色枚举
 export enum UserRole {
   ADMIN = 'admin',
-  TEACHER = 'teacher'
+  TEACHER = 'teacher',
+  CLASS = 'class'
 }
 
 // 表单状态枚举

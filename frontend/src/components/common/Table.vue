@@ -9,11 +9,23 @@ interface TableProps {
   columns: TableColumn[]
   data: any[]
   loading?: boolean
+  clickable?: boolean
 }
 
 const props = withDefaults(defineProps<TableProps>(), {
-  loading: false
+  loading: false,
+  clickable: false
 })
+
+const emit = defineEmits<{
+  'row-click': [row: any]
+}>()
+
+const handleRowClick = (row: any) => {
+  if (props.clickable) {
+    emit('row-click', row)
+  }
+}
 </script>
 
 <template>
@@ -47,7 +59,11 @@ const props = withDefaults(defineProps<TableProps>(), {
           <tr
             v-for="(row, index) in data"
             :key="index"
-            class="hover:bg-gray-50 transition-colors"
+            :class="[
+              'hover:bg-gray-50 transition-colors',
+              clickable ? 'cursor-pointer' : ''
+            ]"
+            @click="handleRowClick(row)"
           >
             <td
               v-for="column in columns"

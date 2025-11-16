@@ -21,6 +21,8 @@ const roleLabel = computed(() => {
       return '管理员'
     case UserRole.TEACHER:
       return '教师'
+    case UserRole.CLASS:
+      return '班级账号'
     default:
       return '未知'
   }
@@ -34,6 +36,8 @@ const roleBadgeClass = computed(() => {
       return 'bg-purple-100 text-purple-800'
     case UserRole.TEACHER:
       return 'bg-blue-100 text-blue-800'
+    case UserRole.CLASS:
+      return 'bg-green-100 text-green-800'
     default:
       return 'bg-gray-100 text-gray-800'
   }

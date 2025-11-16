@@ -28,7 +28,7 @@ const teamMembers: TeamMember[] = [
     name: 'Cloudwhile',
     role: '全栈工程师',
     email: 'linjunhao41@gmail.com',
-    gravatarEmail: '3505161899@qq.com',
+    gravatarEmail: 'whitecat.this@gmail.com',
     description: '负责算法设计与后端开发',
     blogUrl: 'https://icetowne.com',
     githubUrl: 'https://github.com/cloudwhile'

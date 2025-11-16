@@ -11,6 +11,7 @@ const UserManagement = () => import('@/views/users/Users.vue')
 const ClassManagement = () => import('@/views/classes/ClassManagement.vue')
 const ClassDetail = () => import('@/views/classes/ClassDetail.vue')
 const StudentManagement = () => import('@/views/students/StudentManagement.vue')
+const StudentDetail = () => import('@/views/students/StudentDetail.vue')
 const FormManagement = () => import('@/views/forms/Forms.vue')
 const RecordManagement = () => import('@/views/records/Records.vue')
 const Statistics = () => import('@/views/statistics/Statistics.vue')
@@ -77,6 +78,15 @@ const routes: RouteRecordRaw[] = [
         meta: {
           roles: [UserRole.ADMIN, UserRole.TEACHER],
           title: '学生管理'
+        }
+      },
+      {
+        path: 'students/:id',
+        name: 'StudentDetail',
+        component: StudentDetail,
+        meta: {
+          roles: [UserRole.ADMIN, UserRole.TEACHER],
+          title: '学生详情'
         }
       },
       {

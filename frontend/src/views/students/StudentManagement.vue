@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useStudentsStore } from '@/stores/students'
 import { useClassesStore } from '@/stores/classes'
 import { useToast } from '@/composables/useToast'
@@ -22,6 +23,7 @@ import {
   ArrowUpTrayIcon
 } from '@heroicons/vue/24/outline'
 
+const router = useRouter()
 const studentsStore = useStudentsStore()
 const classesStore = useClassesStore()
 const toast = useToast()
@@ -188,6 +190,11 @@ const handleSizeChange = (size: number) => {
   pagination.pageSize = size
   pagination.page = 1
   loadData()
+}
+
+// 跳转到学生详情
+const handleRowClick = (student: Student) => {
+  router.push({ name: 'StudentDetail', params: { id: student.id } })
 }
 
 // 验证表单
@@ -567,7 +574,13 @@ onMounted(() => {
 
       <!-- 学生列表 -->
       <div class="bg-white rounded-lg shadow">
-        <Table :columns="columns" :data="studentsStore.items" :loading="studentsStore.loading">
+        <Table
+          :columns="columns"
+          :data="studentsStore.items"
+          :loading="studentsStore.loading"
+          clickable
+          @row-click="handleRowClick"
+        >
           <!-- 性别列 -->
           <template #cell-gender="{ row }">
             <span :class="[
@@ -593,7 +606,7 @@ onMounted(() => {
 
           <!-- 操作列 -->
           <template #cell-actions="{ row }">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2" @click.stop>
               <button
                 type="button"
                 class="text-blue-600 hover:text-blue-800 transition-colors"

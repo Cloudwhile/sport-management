@@ -337,3 +337,33 @@ export interface StatisticsSummaryResponse {
   classSummaries?: ClassStatistics[];
   itemSummaries?: ItemStatistics[];
 }
+
+// 学生历史体测记录
+export interface StudentTestRecord {
+  id: number;
+  formId: number;
+  formName: string;
+  academicYear: string;
+  testDate: string;
+  classId: number;
+  cohort: string;
+  className: string;
+  testData: Record<string, any>;
+  scores: Record<string, number>;
+  totalScore: number;
+  gradeLevel: string;
+  submittedAt: string;
+}
+
+// 学生历史体测响应
+export interface StudentHistoryResponse {
+  student: {
+    id: number;
+    studentIdNational: string;
+    studentIdSchool: string;
+    name: string;
+    gender: Gender;
+    birthDate: string;
+  };
+  history: StudentTestRecord[];
+}

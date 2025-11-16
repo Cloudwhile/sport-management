@@ -61,10 +61,11 @@ const classesAPI = {
   /**
    * 重置班级密码
    * @param id 班级ID
-   * @returns 新密码
+   * @param password 新密码
+   * @returns 成功消息
    */
-  resetPassword(id: number): Promise<{ password: string }> {
-    return http.post(`/classes/${id}/reset-password`)
+  resetPassword(id: number, password: string): Promise<{ message: string }> {
+    return http.put(`/classes/${id}/password`, { password })
   },
 
   /**

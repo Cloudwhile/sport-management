@@ -424,6 +424,24 @@ class ClassController {
   async resetPassword(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
+      const { password } = req.body;
+
+      // 验证密码
+      if (!password) {
+        res.status(400).json({
+          success: false,
+          error: '请提供新密码',
+        });
+        return;
+      }
+
+      if (password.length < 6) {
+        res.status(400).json({
+          success: false,
+          error: '密码长度至少为6位',
+        });
+        return;
+      }
 
       const classData = await Class.findByPk(id);
       if (!classData) {
@@ -434,9 +452,8 @@ class ClassController {
         return;
       }
 
-      // 重置为默认密码 123456
-      const defaultPassword = '123456';
-      const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+      // 使用用户提供的密码
+      const hashedPassword = await bcrypt.hash(password, 10);
 
       await classData.update({
         classPassword: hashedPassword,
@@ -445,7 +462,6 @@ class ClassController {
       res.json({
         success: true,
         message: '密码重置成功',
-        newPassword: defaultPassword,
       });
     } catch (error) {
       console.error('重置密码失败:', error);

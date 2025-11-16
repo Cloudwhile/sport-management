@@ -47,6 +47,7 @@ const isEditing = ref(false)
 // 当前操作的班级
 const currentClass = ref<Class | null>(null)
 const newPassword = ref('')
+const passwordResetSuccess = ref(false)
 
 // 表单数据
 const formData = reactive({
@@ -277,6 +278,7 @@ const handleSubmit = async () => {
 const openResetPasswordModal = (classItem: Class) => {
   currentClass.value = classItem
   newPassword.value = ''
+  passwordResetSuccess.value = false
   showPasswordModal.value = true
 }
 
@@ -284,13 +286,23 @@ const openResetPasswordModal = (classItem: Class) => {
 const handleResetPassword = async () => {
   if (!currentClass.value) return
 
+  // 验证密码
+  if (!newPassword.value) {
+    toast.error('请输入新密码')
+    return
+  }
+
+  if (newPassword.value.length < 6) {
+    toast.error('密码至少需要6位')
+    return
+  }
+
   try {
-    const result = await classesStore.resetPassword(currentClass.value.id)
-    newPassword.value = result.password
+    await classesStore.resetPassword(currentClass.value.id, newPassword.value)
+    passwordResetSuccess.value = true
     toast.success('密码重置成功')
   } catch (error: any) {
     toast.error(error.message || '重置密码失败')
-    showPasswordModal.value = false
   }
 }
 
@@ -586,38 +598,43 @@ onMounted(() => {
     >
       <div class="space-y-4">
         <p class="text-sm text-gray-600">
-          确定要重置班级
+          为班级
           <span class="font-medium text-gray-900">
             {{ currentClass?.cohort }} {{ currentClass?.className }}
           </span>
-          的密码吗？
+          设置新密码
         </p>
 
-        <div v-if="newPassword" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p class="text-sm text-blue-800 mb-2">新密码已生成：</p>
-          <div class="flex items-center gap-2">
-            <code class="flex-1 bg-white px-3 py-2 rounded border border-blue-300 text-blue-900 font-mono text-sm">
+        <!-- 密码输入框 -->
+        <div v-if="!passwordResetSuccess">
+          <Input
+            v-model="newPassword"
+            type="password"
+            label="新密码"
+            placeholder="请输入新密码（至少6位）"
+          />
+          <p class="mt-1 text-xs text-gray-500">密码长度至少为 6 位字符</p>
+        </div>
+
+        <!-- 成功提示 -->
+        <div v-else class="bg-green-50 border border-green-200 rounded-lg p-4">
+          <p class="text-sm text-green-800">
+            ✓ 密码重置成功！新密码为：
+            <code class="bg-white px-2 py-1 rounded border border-green-300 text-green-900 font-mono">
               {{ newPassword }}
             </code>
-            <Button
-              variant="secondary"
-              size="sm"
-              @click="copyPassword"
-            >
-              复制
-            </Button>
-          </div>
-          <p class="text-xs text-blue-600 mt-2">请妥善保存此密码，关闭后将无法再次查看</p>
+          </p>
+          <p class="text-xs text-green-600 mt-2">请妥善保存此密码</p>
         </div>
       </div>
 
       <template #footer>
         <div class="flex justify-end gap-3">
           <Button variant="secondary" @click="showPasswordModal = false">
-            {{ newPassword ? '关闭' : '取消' }}
+            {{ passwordResetSuccess ? '关闭' : '取消' }}
           </Button>
           <Button
-            v-if="!newPassword"
+            v-if="!passwordResetSuccess"
             variant="primary"
             :loading="classesStore.loading"
             @click="handleResetPassword"

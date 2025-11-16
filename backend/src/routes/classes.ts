@@ -50,11 +50,11 @@ router.put('/:id', requireTeacher, classController.update);
 router.delete('/:id', requireTeacher, classController.delete);
 
 /**
- * @route   POST /api/classes/:id/reset-password
+ * @route   PUT /api/classes/:id/password
  * @desc    重置班级密码
  * @access  Admin + Teacher
  */
-router.post('/:id/reset-password', requireTeacher, classController.resetPassword);
+router.put('/:id/password', requireTeacher, classController.resetPassword);
 
 /**
  * @route   POST /api/classes/:id/students

@@ -1,5 +1,5 @@
 import http from '@/utils/http'
-import type { StatisticsQueryParams, StatisticsSummaryResponse, OverallStatsResponse } from '@/types'
+import type { StatisticsQueryParams, StatisticsSummaryResponse, OverallStatsResponse, StudentHistoryResponse } from '@/types'
 
 /**
  * 统计分析 API
@@ -57,7 +57,7 @@ const statisticsAPI = {
    * @param studentId 学生ID
    * @returns 学生历史数据
    */
-  getStudentHistory(studentId: number): Promise<any> {
+  getStudentHistory(studentId: number): Promise<StudentHistoryResponse> {
     return http.get(`/statistics/students/${studentId}`)
   },
 
