@@ -42,6 +42,9 @@ services:
       # JWT 配置
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-this-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # 数据库迁移配置
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+      AUTO_SEED: ${AUTO_SEED:-true}
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:

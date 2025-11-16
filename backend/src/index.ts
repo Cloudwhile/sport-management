@@ -132,12 +132,29 @@ const startServer = async (): Promise<void> => {
       console.warn(`⚠️  数据库有 ${pending.length} 个待执行的迁移`);
       console.warn('   请先执行: npm run db:migrate');
 
-      if (config.app.env === 'development') {
-        console.log('   开发环境：自动执行迁移中...');
+      // 检查是否启用自动迁移（通过环境变量 AUTO_MIGRATE）
+      const autoMigrate = process.env.AUTO_MIGRATE === 'true';
+
+      if (config.app.env === 'development' || autoMigrate) {
+        console.log('   自动执行迁移中...');
         await migrator.up();
         console.log('✅ 数据库迁移已完成');
+
+        // 如果启用了自动种子数据（通过环境变量 AUTO_SEED）
+        if (process.env.AUTO_SEED === 'true') {
+          console.log('   执行种子数据...');
+          try {
+            // 动态导入种子执行器
+            const { seedMigrator } = await import('./database/umzug.js');
+            await seedMigrator.up();
+            console.log('✅ 种子数据已完成');
+          } catch (error: any) {
+            console.warn('⚠️  种子数据执行失败（可能已存在）:', error.message);
+          }
+        }
       } else {
         console.error('❌ 生产环境不允许自动迁移，请手动执行迁移后再启动');
+        console.error('   或者设置环境变量 AUTO_MIGRATE=true 启用自动迁移');
         process.exit(1);
       }
     } else {
