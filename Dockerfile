@@ -48,6 +48,7 @@ WORKDIR /app
 
 # 安装生产依赖和构建工具（需要 tsx 用于执行迁移脚本）
 COPY backend/package*.json ./
+COPY backend/src/database/ ./src/database/
 RUN npm ci --only=production && \
     npm install tsx --save-dev
 
