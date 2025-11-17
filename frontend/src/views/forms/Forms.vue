@@ -65,6 +65,7 @@ const showCohortsDropdown = ref(false)
 // Test Items Modal
 const showTestItemsModal = ref(false)
 const currentFormId = ref<number | null>(null)
+const currentFormStatus = ref<FormStatus | null>(null)
 const testItems = ref<FormTestItem[]>([])
 const testItemsLoading = ref(false)
 
@@ -296,8 +297,9 @@ const handleSubmitForm = async () => {
   }
 }
 
-const openTestItemsModal = async (formId: number) => {
+const openTestItemsModal = async (formId: number, status: FormStatus) => {
   currentFormId.value = formId
+  currentFormStatus.value = status
   testItemsLoading.value = true
   showTestItemsModal.value = true
 
@@ -319,7 +321,7 @@ const handleUpdateTestItems = async () => {
       itemCode: item.itemCode,
       itemName: item.itemName,
       itemUnit: item.itemUnit,
-      genderLimit: item.genderLimit || undefined,
+      genderLimit: item.genderLimit,
       isRequired: item.isRequired,
       sortOrder: item.sortOrder,
       scoringStandard: item.scoringStandard
@@ -328,6 +330,9 @@ const handleUpdateTestItems = async () => {
     await formsStore.updateTestItems(currentFormId.value, updates)
     toast.success('测试项目更新成功')
     showTestItemsModal.value = false
+
+    // 重新加载表单列表
+    await loadForms()
   } catch (err: any) {
     toast.error(err.message || '更新测试项目失败')
   }
@@ -527,8 +532,8 @@ onMounted(() => {
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                   <button
                     class="text-blue-600 hover:text-blue-900"
-                    title="配置测试项目"
-                    @click="openTestItemsModal(form.id)"
+                    :title="form.status === 'draft' ? '配置测试项目' : '查看测试项目'"
+                    @click="openTestItemsModal(form.id, form.status)"
                   >
                     <Cog6ToothIcon class="h-5 w-5" />
                   </button>
@@ -725,7 +730,7 @@ onMounted(() => {
     <!-- Test Items Modal -->
     <Modal
       v-model="showTestItemsModal"
-      title="测试项目配置"
+      :title="currentFormStatus === 'draft' ? '测试项目配置' : '测试项目查看'"
       size="xl"
     >
       <div v-if="testItemsLoading" class="flex items-center justify-center py-12">
@@ -737,7 +742,68 @@ onMounted(() => {
           共 {{ testItems.length }} 个测试项目
         </div>
 
-        <div class="overflow-x-auto">
+        <!-- 草稿状态：可编辑模式 -->
+        <div v-if="currentFormStatus === 'draft'" class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">排序</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">项目名称</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">单位</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">性别限制</th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">必填</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              <tr v-for="item in testItems" :key="item.id">
+                <td class="px-4 py-3 whitespace-nowrap">
+                  <input
+                    v-model.number="item.sortOrder"
+                    type="number"
+                    class="w-20 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </td>
+                <td class="px-4 py-3">
+                  <input
+                    v-model="item.itemName"
+                    type="text"
+                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </td>
+                <td class="px-4 py-3">
+                  <input
+                    v-model="item.itemUnit"
+                    type="text"
+                    class="w-24 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </td>
+                <td class="px-4 py-3">
+                  <select
+                    v-model="item.genderLimit"
+                    class="w-32 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option :value="null">不限</option>
+                    <option value="male">仅男生</option>
+                    <option value="female">仅女生</option>
+                  </select>
+                </td>
+                <td class="px-4 py-3">
+                  <label class="flex items-center">
+                    <input
+                      v-model="item.isRequired"
+                      type="checkbox"
+                      class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span class="ml-2 text-sm text-gray-700">必填</span>
+                  </label>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 已发布/已关闭状态：只读模式 -->
+        <div v-else class="overflow-x-auto">
           <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
               <tr>
@@ -772,17 +838,31 @@ onMounted(() => {
           </table>
         </div>
 
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
+        <div v-if="currentFormStatus === 'draft'" class="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
           <p class="text-sm text-blue-800">
-            <strong>提示：</strong>创建表单时会自动生成 11 个国标测试项目。如需修改配置，请联系系统管理员。
+            <strong>提示：</strong>修改测试项目配置后，请点击"保存"按钮保存更改。表单发布后将无法修改测试项目。
+          </p>
+        </div>
+
+        <div v-else class="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-4">
+          <p class="text-sm text-gray-700">
+            <strong>提示：</strong>该表单已发布/关闭，测试项目配置为只读模式，无法修改。
           </p>
         </div>
       </div>
 
       <template #footer>
-        <div class="flex justify-end">
+        <div class="flex justify-end gap-3">
           <Button variant="secondary" @click="showTestItemsModal = false">
-            关闭
+            {{ currentFormStatus === 'draft' ? '取消' : '关闭' }}
+          </Button>
+          <Button
+            v-if="currentFormStatus === 'draft'"
+            variant="primary"
+            :loading="formsStore.loading"
+            @click="handleUpdateTestItems"
+          >
+            保存更改
           </Button>
         </div>
       </template>

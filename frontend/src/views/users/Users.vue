@@ -87,13 +87,15 @@ const columns: TableColumn[] = [
 const roleOptions: SelectOption[] = [
   { label: '全部角色', value: '' },
   { label: '管理员', value: UserRole.ADMIN },
-  { label: '教师', value: UserRole.TEACHER }
+  { label: '教师', value: UserRole.TEACHER },
+  { label: '班级账户', value: UserRole.CLASS }
 ]
 
 // 角色创建选项（不含"全部"）
 const roleCreateOptions: SelectOption[] = [
   { label: '管理员', value: UserRole.ADMIN },
-  { label: '教师', value: UserRole.TEACHER }
+  { label: '教师', value: UserRole.TEACHER },
+  { label: '班级账户', value: UserRole.CLASS }
 ]
 
 // 计算总页数
@@ -103,12 +105,16 @@ const totalPages = computed(() => {
 
 // 角色徽章样式
 const getRoleBadgeVariant = (role: UserRole) => {
-  return role === UserRole.ADMIN ? 'danger' : 'info'
+  if (role === UserRole.ADMIN) return 'danger'
+  if (role === UserRole.CLASS) return 'warning'
+  return 'info'
 }
 
 // 角色显示文本
 const getRoleText = (role: UserRole) => {
-  return role === UserRole.ADMIN ? '管理员' : '教师'
+  if (role === UserRole.ADMIN) return '管理员'
+  if (role === UserRole.CLASS) return '班级账户'
+  return '教师'
 }
 
 // 格式化时间

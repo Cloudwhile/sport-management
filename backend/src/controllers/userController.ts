@@ -26,7 +26,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
     const whereConditions: any = {};
 
     // 角色筛选
-    if (role && (role === 'admin' || role === 'teacher')) {
+    if (role && (role === 'admin' || role === 'teacher' || role === 'class')) {
       whereConditions.role = role;
     }
 
@@ -132,8 +132,8 @@ export const create = async (req: Request, res: Response): Promise<void> => {
     }
 
     // 验证角色
-    if (role !== 'admin' && role !== 'teacher') {
-      res.status(400).json({ error: '角色必须是 admin 或 teacher' });
+    if (role !== 'admin' && role !== 'teacher' && role !== 'class') {
+      res.status(400).json({ error: '角色必须是 admin、teacher 或 class' });
       return;
     }
 
