@@ -69,6 +69,22 @@ const recordsAPI = {
    */
   deleteRecord(formId: number, studentId: number): Promise<void> {
     return http.delete(`/records/forms/${formId}/students/${studentId}/record`)
+  },
+
+  /**
+   * 批量获取班级进度
+   * @param formId 表单ID
+   * @returns 班级进度数据
+   */
+  getBatchClassProgress(formId: number): Promise<Array<{
+    classId: number
+    className: string
+    cohort: string
+    totalStudents: number
+    completedStudents: number
+    completionRate: number
+  }>> {
+    return http.get(`/records/forms/${formId}/classes/progress`)
   }
 }
 

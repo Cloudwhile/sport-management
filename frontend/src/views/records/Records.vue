@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { useLocalDraft } from '@/composables/useLocalDraft'
+import { useConfirm } from '@/composables/useConfirm'
 import { formsAPI, recordsAPI, classesAPI } from '@/api'
 import { FormStatus } from '@/types'
 import type {
@@ -42,10 +43,11 @@ enum Step {
   INPUT_DATA = 3
 }
 
-// Store & Toast & Draft
+// Store & Toast & Draft & Confirm
 const authStore = useAuthStore()
 const toast = useToast()
 const draft = useLocalDraft()
+const confirm = useConfirm()
 
 // 状态管理
 const currentStep = ref<Step>(Step.SELECT_FORM)
@@ -166,32 +168,25 @@ const fetchClasses = async () => {
   }
 }
 
-// 获取所有班级的完成进度
+// 获取所有班级的完成进度（使用批量接口）
 const fetchClassesProgress = async () => {
   if (!selectedForm.value) return
 
-  const participatingCohorts = selectedForm.value.participatingCohorts || []
-  const eligibleClasses = classes.value.filter(cls => participatingCohorts.includes(cls.cohort))
+  try {
+    const progressData = await recordsAPI.getBatchClassProgress(selectedForm.value.id)
 
-  // 并发获取所有班级的进度
-  const progressPromises = eligibleClasses.map(async (cls) => {
-    try {
-      const studentsData: StudentWithRecord[] = await recordsAPI.getClassStudentsForForm(
-        selectedForm.value!.id,
-        cls.id
-      )
-
-      const total = studentsData.length
-      const completed = studentsData.filter(s => s._record?.submittedAt).length
-
-      classProgressMap.value.set(cls.id, { total, completed })
-    } catch (error) {
-      // 如果获取失败，设置为0
-      classProgressMap.value.set(cls.id, { total: 0, completed: 0 })
-    }
-  })
-
-  await Promise.all(progressPromises)
+    // 将数据存入 Map
+    classProgressMap.value.clear()
+    progressData.forEach(item => {
+      classProgressMap.value.set(item.classId, {
+        total: item.totalStudents,
+        completed: item.completedStudents
+      })
+    })
+  } catch (error: any) {
+    console.error('获取班级进度失败:', error)
+    toast.error(error.message || '获取班级进度失败')
+  }
 }
 
 // 获取班级完成进度
@@ -644,10 +639,15 @@ const submitAllData = async () => {
 }
 
 // 清空学生草稿数据
-const clearStudentDraft = (student: Student) => {
-  if (!confirm(`确定要清空 ${student.name} 的草稿数据吗？`)) {
-    return
-  }
+const clearStudentDraft = async (student: Student) => {
+  const confirmed = await confirm({
+    title: '清空草稿',
+    message: `确定要清空 ${student.name} 的草稿数据吗？`,
+    confirmText: '清空',
+    variant: 'danger'
+  })
+
+  if (!confirmed) return
 
   // 清空该学生的输入
   testDataMap.value.set(student.id, {})
@@ -666,19 +666,27 @@ const clearStudentDraft = (student: Student) => {
 }
 
 // 清空所有草稿
-const clearAllDrafts = () => {
+const clearAllDrafts = async () => {
   if (!selectedForm.value || !selectedClass.value) return
 
-  if (!confirm('确定要清空所有草稿数据吗？此操作不可恢复！')) {
-    return
-  }
+  const formId = selectedForm.value.id
+  const classId = selectedClass.value.id
+
+  const confirmed = await confirm({
+    title: '清空所有草稿',
+    message: '确定要清空所有草稿数据吗？此操作不可恢复！',
+    confirmText: '清空',
+    variant: 'danger'
+  })
+
+  if (!confirmed) return
 
   // 清空所有输入
   testDataMap.value.clear()
   validationErrors.value.clear()
 
   // 清除草稿
-  draft.clearDraft(selectedForm.value.id, selectedClass.value.id)
+  draft.clearDraft(formId, classId)
   lastSaveTime.value = null
 
   toast.success('已清空所有草稿数据')
@@ -688,9 +696,14 @@ const clearAllDrafts = () => {
 const deleteStudentRecord = async (student: Student) => {
   if (!selectedForm.value) return
 
-  if (!confirm(`确定要删除 ${student.name} 已提交的体测数据吗？`)) {
-    return
-  }
+  const confirmed = await confirm({
+    title: '删除体测数据',
+    message: `确定要删除 ${student.name} 已提交的体测数据吗？此操作不可恢复！`,
+    confirmText: '删除',
+    variant: 'danger'
+  })
+
+  if (!confirmed) return
 
   try {
     saving.value = true
