@@ -198,8 +198,12 @@ const authStore = useAuthStore()
 const user = computed(() => authStore.user)
 const isAdmin = computed(() => authStore.isAdmin)
 
+// 获取设置 store
+import { useSettingsStore } from '@/stores'
+const settingsStore = useSettingsStore()
+
 // 获取应用标题
-const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const appTitle = computed(() => settingsStore.appTitle)
 const isTeacher = computed(() => authStore.isTeacher)
 
 // State

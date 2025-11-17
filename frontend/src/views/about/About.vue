@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import Card from '@/components/common/Card.vue'
 import { EnvelopeIcon, CodeBracketIcon, GlobeAltIcon, CodeBracketSquareIcon } from '@heroicons/vue/24/outline'
 import MD5 from 'crypto-js/md5'
@@ -35,8 +36,12 @@ const teamMembers: TeamMember[] = [
   }
 ]
 
+// 获取设置 store
+import { useSettingsStore } from '@/stores'
+const settingsStore = useSettingsStore()
+
 // 获取应用标题
-const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const appTitle = computed(() => settingsStore.appTitle)
 
 // 生成 Gravatar URL（使用 MD5 哈希）
 const getGravatarUrl = (email: string, size: number = 200): string => {
