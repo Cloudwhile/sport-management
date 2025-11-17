@@ -10,6 +10,8 @@ import Select from '@/components/common/Select.vue'
 import Button from '@/components/common/Button.vue'
 import Badge from '@/components/common/Badge.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import DatePicker from '@/components/common/DatePicker.vue'
+import DateTimePicker from '@/components/common/DateTimePicker.vue'
 import type {
   PhysicalTestForm,
   FormTestItem,
@@ -601,22 +603,25 @@ onMounted(() => {
       <div class="space-y-4">
         <Input
           v-model="formData.formName"
-          label="表单名称 *"
+          label="表单名称"
           placeholder="例如：2024年秋季体测"
+          required
           :error="formErrors.formName"
         />
 
         <Input
           v-model="formData.academicYear"
           type="number"
-          label="学年 *"
+          label="学年"
           placeholder="例如：2025"
+          required
           :error="formErrors.academicYear"
         />
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">
-            参与年级 *
+            参与年级 
+            <span class="text-red-500 ml-1">*</span>
           </label>
           <!-- 下拉多选框 -->
           <div class="relative">
@@ -683,25 +688,23 @@ onMounted(() => {
           </p>
         </div>
 
-        <Input
+        <DatePicker
           v-model="formData.testDate"
-          type="text"
           label="测试日期"
-          placeholder="YYYY-MM-DD"
+          placeholder="选择测试日期"
+          required
         />
 
-        <Input
+        <DateTimePicker
           v-model="formData.startTime"
-          type="text"
-          label="开始时间"
-          placeholder="YYYY-MM-DD HH:mm:ss"
+          label="开始填报时间"
+          placeholder="选择开始填报时间"
         />
 
-        <Input
+        <DateTimePicker
           v-model="formData.endTime"
-          type="text"
-          label="结束时间"
-          placeholder="YYYY-MM-DD HH:mm:ss"
+          label="结束填报时间"
+          placeholder="选择结束填报时间"
         />
 
         <div>

@@ -6,6 +6,7 @@ interface InputProps {
   type?: 'text' | 'number' | 'email' | 'password' | 'tel' | 'url'
   placeholder?: string
   disabled?: boolean
+  required?: boolean
   error?: string
   label?: string
 }
@@ -39,6 +40,7 @@ const handleInput = (event: Event) => {
   <div class="w-full">
     <label v-if="label" class="block text-sm font-medium text-gray-700 mb-1">
       {{ label }}
+      <span v-if="required" class="text-red-500 ml-1">*</span>
     </label>
     <input
       :class="inputClasses"
@@ -46,6 +48,7 @@ const handleInput = (event: Event) => {
       :value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"
+      :required="required"
       @input="handleInput"
     />
     <p v-if="error" class="mt-1 text-sm text-red-600">
