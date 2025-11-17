@@ -63,6 +63,7 @@ import studentRoutes from './routes/students.js';
 import formRoutes from './routes/forms.js';
 import recordRoutes from './routes/records.js';
 import statisticsRoutes from './routes/statistics.js';
+import settingsRoutes from './routes/settings.js';
 
 // Swagger文档（仅在非生产环境启用）
 import { fileURLToPath } from 'url';
@@ -86,6 +87,7 @@ app.use('/api/students', studentRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/records', recordRoutes);
 app.use('/api/statistics', statisticsRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Swagger UI（仅在非生产环境启用）
 if (config.app.env !== 'production' && swaggerDocument) {

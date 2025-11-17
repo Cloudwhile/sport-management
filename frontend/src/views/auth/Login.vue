@@ -123,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { UserIcon, LockClosedIcon, BuildingLibraryIcon } from '@heroicons/vue/24/outline'
@@ -132,8 +132,12 @@ import { UserIcon, LockClosedIcon, BuildingLibraryIcon } from '@heroicons/vue/24
 const router = useRouter()
 const authStore = useAuthStore()
 
+// 获取设置 store
+import { useSettingsStore } from '@/stores'
+const settingsStore = useSettingsStore()
+
 // 获取应用标题
-const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const appTitle = computed(() => settingsStore.appTitle)
 const todayYear = new Date().getFullYear()
 
 // ==================== 表单数据 ====================

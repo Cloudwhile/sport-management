@@ -480,12 +480,15 @@ export const updateTestItems = async (req: Request, res: Response): Promise<void
     for (const item of items) {
       await FormTestItem.update(
         {
+          itemName: item.itemName,
+          itemUnit: item.itemUnit,
+          genderLimit: item.genderLimit,
           isRequired: item.isRequired,
           sortOrder: item.sortOrder,
           scoringStandard: item.scoringStandard,
         },
         {
-          where: { id: item.id, formId: id },
+          where: { itemCode: item.itemCode, formId: id },
           transaction,
         }
       );

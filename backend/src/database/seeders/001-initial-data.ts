@@ -39,7 +39,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
         username: 'teacher',
         password: teacherPassword,
         role: 'teacher',
-        real_name: '张老师',
+        real_name: '测试教师账户',
         created_at: new Date(),
         updated_at: new Date(),
       });

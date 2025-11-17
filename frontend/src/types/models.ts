@@ -2,6 +2,15 @@
 
 import { UserRole, FormStatus, Gender, GradeLevel } from './common';
 
+// 系统设置模型
+export interface SystemSetting {
+  key: string;
+  value: string;
+  description?: string;
+  category: string;
+  isPublic: boolean;
+}
+
 // 用户模型
 export interface User {
   id: number;

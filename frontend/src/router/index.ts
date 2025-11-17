@@ -15,6 +15,7 @@ const StudentDetail = () => import('@/views/students/StudentDetail.vue')
 const FormManagement = () => import('@/views/forms/Forms.vue')
 const RecordManagement = () => import('@/views/records/Records.vue')
 const Statistics = () => import('@/views/statistics/Statistics.vue')
+const SystemSettings = () => import('@/views/settings/Settings.vue')
 const About = () => import('@/views/about/About.vue')
 
 // 路由配置
@@ -116,6 +117,15 @@ const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'settings',
+        name: 'SystemSettings',
+        component: SystemSettings,
+        meta: {
+          roles: [UserRole.ADMIN],
+          title: '系统设置'
+        }
+      },
+      {
         path: 'about',
         name: 'About',
         component: About,
@@ -142,13 +152,17 @@ router.beforeEach(authGuard)
 
 // 设置页面标题
 router.afterEach((to) => {
-  const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
-  const title = to.meta.title as string
-  if (title) {
-    document.title = `${title} - ${appTitle}`
-  } else {
-    document.title = appTitle
-  }
+  // 动态导入 settings store 以获取最新的应用标题
+  import('@/stores/settings').then(({ useSettingsStore }) => {
+    const settingsStore = useSettingsStore()
+    const appTitle = settingsStore.appTitle || '学校体测数据管理系统'
+    const title = to.meta.title as string
+    if (title) {
+      document.title = `${title} - ${appTitle}`
+    } else {
+      document.title = appTitle
+    }
+  })
 })
 
 export default router

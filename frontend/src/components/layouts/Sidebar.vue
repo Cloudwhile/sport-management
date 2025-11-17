@@ -12,6 +12,7 @@ import {
   DocumentTextIcon,
   ClipboardDocumentListIcon,
   ChartBarIcon,
+  Cog6ToothIcon,
   InformationCircleIcon
 } from '@heroicons/vue/24/outline'
 import {
@@ -22,6 +23,7 @@ import {
   DocumentTextIcon as DocumentTextIconSolid,
   ClipboardDocumentListIcon as ClipboardDocumentListIconSolid,
   ChartBarIcon as ChartBarIconSolid,
+  Cog6ToothIcon as Cog6ToothIconSolid,
   InformationCircleIcon as InformationCircleIconSolid
 } from '@heroicons/vue/24/solid'
 
@@ -30,8 +32,12 @@ const route = useRoute()
 const authStore = useAuthStore()
 const uiStore = useUIStore()
 
+// 获取设置 store
+import { useSettingsStore } from '@/stores'
+const settingsStore = useSettingsStore()
+
 // 获取应用标题
-const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const appTitle = computed(() => settingsStore.appTitle)
 const todayYear = new Date().getFullYear()
 
 // 恢复侧边栏状态
@@ -101,6 +107,13 @@ const allMenuItems: MenuItem[] = [
     icon: ChartBarIcon,
     iconSolid: ChartBarIconSolid,
     roles: [UserRole.ADMIN, UserRole.TEACHER]
+  },
+  {
+    name: 'SystemSettings',
+    label: '系统设置',
+    icon: Cog6ToothIcon,
+    iconSolid: Cog6ToothIconSolid,
+    roles: [UserRole.ADMIN]
   },
   {
     name: 'About',

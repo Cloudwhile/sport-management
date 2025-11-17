@@ -478,3 +478,74 @@ export const deleteRecord = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * 批量获取班级进度
+ * 返回指定表单下所有班级的完成进度（总人数、已完成人数）
+ */
+export const getBatchClassProgress = async (req: Request, res: Response) => {
+  try {
+    const { formId } = req.params;
+
+    // 验证表单是否存在
+    const form = await PhysicalTestForm.findByPk(formId);
+    if (!form) {
+      return res.status(404).json({
+        success: false,
+        message: '表单不存在'
+      });
+    }
+
+    // 获取所有符合条件的班级
+    const allClasses = await Class.findAll();
+    const participatingCohorts = form.participatingCohorts || [];
+    const eligibleClasses = allClasses.filter(cls =>
+      participatingCohorts.includes(cls.cohort)
+    );
+
+    // 批量统计每个班级的进度
+    const progressData = await Promise.all(
+      eligibleClasses.map(async (cls) => {
+        // 获取该班级在该学年的学生总数
+        const totalStudents = await StudentClassRelation.count({
+          where: {
+            classId: cls.id,
+            academicYear: form.academicYear,
+            isActive: true
+          }
+        });
+
+        // 获取已完成测试的学生数（有submittedAt的记录）
+        const completedStudents = await PhysicalTestRecord.count({
+          where: {
+            formId,
+            classId: cls.id
+          }
+        });
+
+        return {
+          classId: cls.id,
+          className: cls.className,
+          cohort: cls.cohort,
+          totalStudents,
+          completedStudents,
+          completionRate: totalStudents > 0
+            ? Math.round((completedStudents / totalStudents) * 100)
+            : 0
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: progressData
+    });
+  } catch (error: any) {
+    console.error('批量获取班级进度失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取班级进度失败',
+      error: error.message
+    });
+  }
+};

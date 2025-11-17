@@ -4,7 +4,8 @@ import {
   createOrUpdateRecord,
   batchCreateOrUpdateRecords,
   getStudentRecord,
-  deleteRecord
+  deleteRecord,
+  getBatchClassProgress
 } from '../controllers/recordController.js';
 import { authenticate, requireTeacher } from '../middleware/auth.js';
 
@@ -47,5 +48,12 @@ router.get('/forms/:formId/students/:studentId/record', getStudentRecord);
  * @access  Admin + Teacher
  */
 router.delete('/forms/:formId/students/:studentId/record', requireTeacher, deleteRecord);
+
+/**
+ * @route   GET /api/records/forms/:formId/classes/progress
+ * @desc    批量获取班级进度
+ * @access  Private (认证用户)
+ */
+router.get('/forms/:formId/classes/progress', getBatchClassProgress);
 
 export default router;

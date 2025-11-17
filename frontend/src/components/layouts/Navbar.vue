@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore, useSettingsStore } from '@/stores'
 import { useUIStore } from '@/stores/ui'
 import { ArrowRightOnRectangleIcon, Bars3Icon } from '@heroicons/vue/24/outline'
 import { UserRole } from '@/types/common'
@@ -9,9 +9,10 @@ import { UserRole } from '@/types/common'
 const router = useRouter()
 const authStore = useAuthStore()
 const uiStore = useUIStore()
+const settingsStore = useSettingsStore()
 
 // 获取应用标题
-const appTitle = import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
+const appTitle = computed(() => settingsStore.appTitle)
 
 // 计算角色显示名称
 const roleLabel = computed(() => {

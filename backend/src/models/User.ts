@@ -5,7 +5,7 @@ interface UserAttributes {
   id: number;
   username: string;
   password: string;
-  role: 'admin' | 'teacher';
+  role: 'admin' | 'teacher' | 'class';
   realName?: string;
   created_at?: Date;
   updated_at?: Date;
@@ -29,9 +29,9 @@ const User = sequelize.define<Model<UserAttributes>>('User', {
     comment: '密码哈希',
   },
   role: {
-    type: DataTypes.ENUM('admin', 'teacher'),
+    type: DataTypes.ENUM('admin', 'teacher', 'class'),
     allowNull: false,
-    comment: '角色',
+    comment: '角色：admin-管理员, teacher-教师, class-无归属班级账户',
   },
   realName: {
     type: DataTypes.STRING(100),
