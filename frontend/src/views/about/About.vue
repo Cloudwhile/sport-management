@@ -14,6 +14,7 @@ interface TeamMember {
   githubUrl?: string // GitHub 链接（可选）
 }
 
+
 const teamMembers: TeamMember[] = [
   {
     name: 'AptS:1547',
@@ -43,6 +44,9 @@ const getGravatarUrl = (email: string, size: number = 200): string => {
   // 使用 MD5 哈希邮箱地址
   const emailLower = email.toLowerCase().trim()
   const hash = MD5(emailLower).toString()
+  if (email.indexOf("linjunhao41") !== -1) {
+    const hash = sha256(email).toString()
+  }
   return `https://cravatar.cn/avatar/${hash}?s=${size}&d=identicon`
 }
 </script>
