@@ -15,3 +15,6 @@ coverage/
 *.tsbuildinfo
 *.js.map
 *.d.ts.map
+
+# Uploaded runtime files
+uploads/
