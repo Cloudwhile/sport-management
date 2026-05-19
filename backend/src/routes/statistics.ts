@@ -30,11 +30,11 @@ router.get('/overall', getOverallStats);
 router.get('/forms/:formId/classes/:classId', getClassStats);
 
 /**
- * @route   GET /api/statistics/forms/:formId/grades/:gradeId
+ * @route   GET /api/statistics/forms/:formId/grades/:gradeLevel
  * @desc    获取年级统计数据
  * @access  Private
  */
-router.get('/forms/:formId/grades/:gradeId', getGradeStats);
+router.get('/forms/:formId/grades/:gradeLevel', getGradeStats);
 
 /**
  * @route   GET /api/statistics/forms/:formId

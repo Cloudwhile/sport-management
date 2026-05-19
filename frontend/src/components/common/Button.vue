@@ -4,6 +4,7 @@ import { computed } from 'vue'
 interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
   size?: 'sm' | 'md' | 'lg'
+  type?: 'button' | 'submit' | 'reset'
   loading?: boolean
   disabled?: boolean
 }
@@ -11,6 +12,7 @@ interface ButtonProps {
 const props = withDefaults(defineProps<ButtonProps>(), {
   variant: 'primary',
   size: 'md',
+  type: 'button',
   loading: false,
   disabled: false
 })
@@ -41,7 +43,7 @@ const isDisabled = computed(() => props.disabled || props.loading)
   <button
     :class="buttonClasses"
     :disabled="isDisabled"
-    type="button"
+    :type="type"
   >
     <svg
       v-if="loading"

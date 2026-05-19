@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { Bar, Line } from 'vue-chartjs'
+import { Bar, Line, Doughnut, Radar } from 'vue-chartjs'
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   BarElement,
+  ArcElement,
   PointElement,
   LineElement,
+  RadialLinearScale,
   Title,
   Tooltip,
   Legend,
+  Filler,
   type ChartData,
   type ChartOptions
 } from 'chart.js'
@@ -22,6 +25,8 @@ import statisticsAPI from '@/api/statistics'
 import formsAPI from '@/api/forms'
 import classesAPI from '@/api/classes'
 import { useToast } from '@/composables/useToast'
+import { formatHighSchoolClassName, formatSchoolGradeName } from '@/utils/classNameFormatter'
+import { useSettingsStore } from '@/stores'
 import type { StatisticsSummaryResponse, PhysicalTestForm, Class } from '@/types'
 import {
   ChartBarIcon,
@@ -29,37 +34,52 @@ import {
   UserGroupIcon,
   TrophyIcon,
   CheckCircleIcon,
-  ClipboardDocumentCheckIcon
+  ClipboardDocumentCheckIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/vue/24/outline'
 
-// 注册 Chart.js 组件
 ChartJS.register(
   CategoryScale,
   LinearScale,
   BarElement,
+  ArcElement,
   PointElement,
   LineElement,
+  RadialLinearScale,
   Title,
   Tooltip,
-  Legend
+  Legend,
+  Filler
 )
 
 const toast = useToast()
+const settingsStore = useSettingsStore()
+const schoolLevelLabel = computed(() => settingsStore.schoolLevelLabel)
 
-// 统计维度枚举
 enum StatsDimension {
   SCHOOL = 'school',
   GRADE = 'grade',
   CLASS = 'class'
 }
 
-// 表单状态
+const chartColors = [
+  'rgb(37, 99, 235)',
+  'rgb(16, 185, 129)',
+  'rgb(245, 158, 11)',
+  'rgb(239, 68, 68)',
+  'rgb(139, 92, 246)',
+  'rgb(14, 165, 233)'
+]
+
+const getChartColor = (index: number): string => chartColors[index % chartColors.length] || 'rgb(37, 99, 235)'
+
+
 const forms = ref<PhysicalTestForm[]>([])
 const classes = ref<Class[]>([])
 const loading = ref(false)
 const dataLoading = ref(false)
+const statsData = ref<StatisticsSummaryResponse | null>(null)
 
-// 筛选条件
 const filters = reactive({
   formId: undefined as number | undefined,
   dimension: StatsDimension.SCHOOL as StatsDimension,
@@ -67,17 +87,19 @@ const filters = reactive({
   classId: undefined as number | undefined
 })
 
-// 统计数据
-const statsData = ref<StatisticsSummaryResponse | null>(null)
+const appliedFilters = reactive({
+  formId: undefined as number | undefined,
+  dimension: StatsDimension.SCHOOL as StatsDimension,
+  gradeLevel: undefined as string | undefined,
+  classId: undefined as number | undefined
+})
 
-// 学生历史查询
 const studentHistory = reactive({
   studentId: '',
   loading: false,
   data: null as any
 })
 
-// 表单选项
 const formOptions = computed<SelectOption[]>(() => {
   return forms.value.map(form => ({
     label: `${form.formName} (${form.academicYear})`,
@@ -85,238 +107,394 @@ const formOptions = computed<SelectOption[]>(() => {
   }))
 })
 
-// 维度选项
 const dimensionOptions: SelectOption[] = [
   { label: '全校统计', value: StatsDimension.SCHOOL },
-  { label: '年级统计', value: StatsDimension.GRADE },
+  { label: '级部统计', value: StatsDimension.GRADE },
   { label: '班级统计', value: StatsDimension.CLASS }
 ]
 
-// 年级选项
-const gradeOptions: SelectOption[] = [
-  { label: '一年级', value: '1' },
-  { label: '二年级', value: '2' },
-  { label: '三年级', value: '3' },
-  { label: '四年级', value: '4' },
-  { label: '五年级', value: '5' },
-  { label: '六年级', value: '6' },
-  { label: '七年级', value: '7' },
-  { label: '八年级', value: '8' },
-  { label: '九年级', value: '9' }
-]
+const selectedForm = computed(() => forms.value.find(form => Number(form.id) === Number(filters.formId)))
 
-// 班级选项
-const classOptions = computed<SelectOption[]>(() => {
-  return classes.value.map(cls => ({
-    label: `${cls.cohort} ${cls.className}`,
-    value: cls.id
+
+const availableCohortsForForm = computed(() => {
+  const form = selectedForm.value
+  const cohorts = new Set<string>()
+
+  classes.value.forEach(cls => {
+    if (cls.cohort) cohorts.add(String(cls.cohort))
+  })
+
+  form?.participatingCohorts?.forEach(cohort => {
+    if (cohort) cohorts.add(String(cohort))
+  })
+
+  return [...cohorts]
+    .sort((a, b) => Number(b) - Number(a))
+})
+
+const gradeOptions = computed<SelectOption[]>(() => {
+  return availableCohortsForForm.value.map(cohort => ({
+    label: `${schoolLevelLabel.value}${cohort}级`,
+    value: cohort
   }))
 })
 
-// 分数分布图表数据
-const scoreDistributionData = computed<ChartData<'bar'>>(() => {
-  if (!statsData.value) {
-    return {
-      labels: [],
-      datasets: []
-    }
-  }
+const classOptions = computed<SelectOption[]>(() => {
+  const cohorts = new Set(availableCohortsForForm.value.map(String))
+  return classes.value
+    .filter(cls => !selectedForm.value || cohorts.has(String(cls.cohort)))
+    .map(cls => ({
+      label: formatHighSchoolClassName(cls.cohort, cls.className, schoolLevelLabel.value),
+      value: cls.id
+    }))
+})
 
-  const dist = statsData.value.gradeDistribution
+const activeDimension = computed(() => statsData.value ? appliedFilters.dimension : filters.dimension)
+const isSchoolScope = computed(() => activeDimension.value === StatsDimension.SCHOOL)
+const isGradeScope = computed(() => activeDimension.value === StatsDimension.GRADE)
+const isClassScope = computed(() => activeDimension.value === StatsDimension.CLASS)
+const clampPercent = (value: number): number => {
+  return Math.min(100, Math.max(0, Number.isFinite(value) ? value : 0))
+}
+
+const formatPercent = (value: number, digits = 1): string => `${clampPercent(value).toFixed(digits)}%`
+const formatRatio = (value: number, digits = 1): string => formatPercent((Number.isFinite(value) ? value : 0) * 100, digits)
+const formatPercentFromCounts = (numerator: number, denominator: number, digits = 1): string => {
+  return denominator > 0 ? formatPercent((numerator / denominator) * 100, digits) : formatPercent(0, digits)
+}
+const formatSigned = (value?: number, suffix = ''): string => {
+  if (value === undefined || value === null || !Number.isFinite(value)) return '暂无环比'
+  if (value === 0) return `持平${suffix}`
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}${suffix}`
+}
+const deltaClass = (value?: number): string => {
+  if (value === undefined || value === null || value === 0) return 'text-gray-500 bg-gray-100'
+  return value > 0 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'
+}
+const heatmapCellClass = (value: number | null): string => {
+  if (value === null) return 'bg-gray-50 text-gray-400'
+  if (value >= 90) return 'bg-green-100 text-green-900'
+  if (value >= 80) return 'bg-blue-100 text-blue-900'
+  if (value >= 60) return 'bg-yellow-100 text-yellow-900'
+  return 'bg-red-100 text-red-900'
+}
+
+const passRate = computed(() => {
+  if (!statsData.value) return '0.0%'
+  return formatPercentFromCounts(
+    statsData.value.submittedCount - statsData.value.gradeDistribution.fail,
+    statsData.value.submittedCount
+  )
+})
+
+const excellentRate = computed(() => {
+  if (!statsData.value) return '0.0%'
+  return formatPercentFromCounts(statsData.value.gradeDistribution.excellent, statsData.value.submittedCount)
+})
+
+const scoreDistributionBarData = computed<ChartData<'bar'>>(() => {
+  const dist = statsData.value?.gradeDistribution
   return {
-    labels: ['不及格 (0-59)', '及格 (60-79)', '良好 (80-89)', '优秀 (90-100)'],
+    labels: ['不及格', '及格', '良好', '优秀'],
+    datasets: [{
+      label: '学生人数',
+      data: dist ? [dist.fail, dist.pass, dist.good, dist.excellent] : [],
+      backgroundColor: ['rgba(239, 68, 68, 0.72)', 'rgba(245, 158, 11, 0.72)', 'rgba(37, 99, 235, 0.72)', 'rgba(16, 185, 129, 0.72)'],
+      borderColor: ['rgb(239, 68, 68)', 'rgb(245, 158, 11)', 'rgb(37, 99, 235)', 'rgb(16, 185, 129)'],
+      borderWidth: 1
+    }]
+  }
+})
+
+const scoreDistributionDoughnutData = computed<ChartData<'doughnut'>>(() => {
+  const dist = statsData.value?.gradeDistribution
+  return {
+    labels: ['优秀', '良好', '及格', '不及格'],
+    datasets: [{
+      data: dist ? [dist.excellent, dist.good, dist.pass, dist.fail] : [],
+      backgroundColor: ['rgba(16, 185, 129, 0.86)', 'rgba(37, 99, 235, 0.86)', 'rgba(245, 158, 11, 0.86)', 'rgba(239, 68, 68, 0.86)'],
+      borderColor: '#fff',
+      borderWidth: 2
+    }]
+  }
+})
+
+const itemAverageData = computed<ChartData<'bar'>>(() => {
+  const items = statsData.value?.itemSummaries || []
+  return {
+    labels: items.map(item => item.itemName),
+    datasets: [{
+      label: '平均分',
+      data: items.map(item => item.averageScore),
+      backgroundColor: 'rgba(37, 99, 235, 0.7)',
+      borderColor: 'rgb(37, 99, 235)',
+      borderWidth: 1
+    }]
+  }
+})
+
+const radarData = computed<ChartData<'radar'>>(() => {
+  const radar = statsData.value?.radarSeries
+  return {
+    labels: radar?.labels || [],
+    datasets: (radar?.series || []).map((series, index) => {
+      const color = getChartColor(index)
+      return {
+        label: series.name,
+        data: series.data,
+        borderColor: color,
+        backgroundColor: color.replace('rgb', 'rgba').replace(')', ', 0.16)'),
+        pointBackgroundColor: color,
+        pointBorderColor: '#fff',
+        borderWidth: 2
+      }
+    })
+  }
+})
+
+const trendData = computed<ChartData<'line'>>(() => {
+  const trend = statsData.value?.trendSeries
+  return {
+    labels: trend?.labels || [],
+    datasets: (trend?.series || []).map((series, index) => {
+      const color = getChartColor(index)
+      return {
+        label: series.name,
+        data: series.data,
+        borderColor: color,
+        backgroundColor: color.replace('rgb', 'rgba').replace(')', ', 0.12)'),
+        tension: 0.28,
+        fill: false,
+        pointRadius: 3,
+        pointHoverRadius: 5
+      }
+    })
+  }
+})
+
+const trendMetricData = computed<ChartData<'line'>>(() => {
+  const trend = statsData.value?.trendMetricSeries
+  return {
+    labels: trend?.labels || [],
+    datasets: (trend?.series || []).map((series, index) => {
+      const color = getChartColor(index)
+      return {
+        label: series.name,
+        data: series.data,
+        borderColor: color,
+        backgroundColor: color.replace('rgb', 'rgba').replace(')', ', 0.1)'),
+        tension: 0.28,
+        fill: false,
+        pointRadius: 3,
+        pointHoverRadius: 5
+      }
+    })
+  }
+})
+
+const itemTrendData = computed<ChartData<'line'>>(() => {
+  const trend = statsData.value?.itemTrendSeries
+  return {
+    labels: trend?.labels || [],
+    datasets: (trend?.series || []).slice(0, 6).map((series, index) => {
+      const color = getChartColor(index)
+      return {
+        label: series.name,
+        data: series.data,
+        borderColor: color,
+        backgroundColor: color.replace('rgb', 'rgba').replace(')', ', 0.1)'),
+        tension: 0.28,
+        fill: false,
+        pointRadius: 3,
+        pointHoverRadius: 5
+      }
+    })
+  }
+})
+
+const classComparisonData = computed<ChartData<'bar'>>(() => {
+  const classes = statsData.value?.classSummaries || []
+  return {
+    labels: classes.map(item => item.className),
     datasets: [
       {
-        label: '学生人数',
-        data: [dist.fail, dist.pass, dist.good, dist.excellent],
-        backgroundColor: [
-          'rgba(239, 68, 68, 0.7)',   // 红色 - 不及格
-          'rgba(251, 191, 36, 0.7)',  // 黄色 - 及格
-          'rgba(59, 130, 246, 0.7)',  // 蓝色 - 良好
-          'rgba(34, 197, 94, 0.7)'    // 绿色 - 优秀
-        ],
-        borderColor: [
-          'rgb(239, 68, 68)',
-          'rgb(251, 191, 36)',
-          'rgb(59, 130, 246)',
-          'rgb(34, 197, 94)'
-        ],
-        borderWidth: 2
+        label: '平均分',
+        data: classes.map(item => item.averageScore),
+        backgroundColor: 'rgba(37, 99, 235, 0.7)'
+      },
+      {
+        label: '及格率',
+        data: classes.map(item => item.passRate),
+        backgroundColor: 'rgba(16, 185, 129, 0.7)'
+      },
+      {
+        label: '优秀率',
+        data: classes.map(item => item.excellentRate),
+        backgroundColor: 'rgba(139, 92, 246, 0.7)'
       }
     ]
   }
 })
 
-// 分数分布图表配置
-const scoreDistributionOptions: ChartOptions<'bar'> = {
+const classStackedDistributionData = computed<ChartData<'bar'>>(() => {
+  const classes = statsData.value?.classSummaries || []
+  return {
+    labels: classes.map(item => item.className),
+    datasets: [
+      {
+        label: '优秀',
+        data: classes.map(item => item.gradeDistribution?.excellent || 0),
+        backgroundColor: 'rgba(16, 185, 129, 0.78)'
+      },
+      {
+        label: '良好',
+        data: classes.map(item => item.gradeDistribution?.good || 0),
+        backgroundColor: 'rgba(37, 99, 235, 0.78)'
+      },
+      {
+        label: '及格',
+        data: classes.map(item => item.gradeDistribution?.pass || 0),
+        backgroundColor: 'rgba(245, 158, 11, 0.78)'
+      },
+      {
+        label: '不及格',
+        data: classes.map(item => item.gradeDistribution?.fail || 0),
+        backgroundColor: 'rgba(239, 68, 68, 0.78)'
+      }
+    ]
+  }
+})
+
+const genderComparisonData = computed<ChartData<'bar'>>(() => {
+  const genders = statsData.value?.genderSummaries || []
+  return {
+    labels: genders.map(item => item.genderName),
+    datasets: [
+      {
+        label: '平均分',
+        data: genders.map(item => item.averageScore),
+        backgroundColor: 'rgba(37, 99, 235, 0.72)'
+      },
+      {
+        label: '优秀率',
+        data: genders.map(item => item.excellentRate),
+        backgroundColor: 'rgba(139, 92, 246, 0.72)'
+      },
+      {
+        label: '及格率',
+        data: genders.map(item => item.passRate),
+        backgroundColor: 'rgba(16, 185, 129, 0.72)'
+      }
+    ]
+  }
+})
+
+const classChartHeight = computed(() => {
+  const count = statsData.value?.classSummaries?.length || 0
+  return `${Math.max(384, count * 34)}px`
+})
+const studentHistoryData = computed<ChartData<'line'>>(() => {
+  const history = studentHistory.data?.history || []
+  return {
+    labels: history.map((record: any) => record.formName || record.academicYear),
+    datasets: [{
+      label: '总分',
+      data: history.map((record: any) => Number(record.totalScore) || 0),
+      borderColor: 'rgb(37, 99, 235)',
+      backgroundColor: 'rgba(37, 99, 235, 0.1)',
+      tension: 0.3,
+      fill: true
+    }]
+  }
+})
+
+const commonBarOptions: ChartOptions<'bar'> = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: {
-      display: false
-    },
-    title: {
-      display: true,
-      text: '成绩分布统计',
-      font: {
-        size: 16,
-        weight: 'bold'
-      }
-    },
-    tooltip: {
-      callbacks: {
-        label: (context) => {
-          return `学生人数: ${context.parsed.y} 人`
-        }
-      }
-    }
+    legend: { position: 'bottom' },
+    tooltip: { mode: 'index', intersect: false }
   },
   scales: {
-    y: {
-      beginAtZero: true,
-      ticks: {
-        stepSize: 1
-      },
-      title: {
-        display: true,
-        text: '人数'
-      }
-    },
-    x: {
-      title: {
-        display: true,
-        text: '分数段'
-      }
-    }
+    y: { beginAtZero: true, max: 100 }
   }
 }
 
-// 各项目平均成绩图表数据
-const itemAverageData = computed<ChartData<'bar'>>(() => {
-  if (!statsData.value?.itemSummaries) {
-    return {
-      labels: [],
-      datasets: []
-    }
-  }
-
-  const items = statsData.value.itemSummaries
-  return {
-    labels: items.map(item => item.itemName),
-    datasets: [
-      {
-        label: '平均成绩',
-        data: items.map(item => item.averageScore),
-        backgroundColor: 'rgba(99, 102, 241, 0.7)',
-        borderColor: 'rgb(99, 102, 241)',
-        borderWidth: 2
-      }
-    ]
-  }
-})
-
-// 各项目平均成绩图表配置
-const itemAverageOptions: ChartOptions<'bar'> = {
+const classComparisonOptions: ChartOptions<'bar'> = {
   responsive: true,
   maintainAspectRatio: false,
   indexAxis: 'y',
   plugins: {
-    legend: {
-      display: false
-    },
-    title: {
-      display: true,
-      text: '各项目平均成绩',
-      font: {
-        size: 16,
-        weight: 'bold'
-      }
-    },
-    tooltip: {
-      callbacks: {
-        label: (context) => {
-          return `平均分: ${context.parsed.x?.toFixed(2) || '0'}`
-        }
-      }
-    }
+    legend: { position: 'bottom' },
+    tooltip: { mode: 'index', intersect: false }
   },
   scales: {
-    x: {
-      beginAtZero: true,
-      max: 100,
-      title: {
-        display: true,
-        text: '平均分'
-      }
-    }
+    x: { beginAtZero: true, max: 100 }
   }
 }
-
-// 学生历史成绩图表数据
-const studentHistoryData = computed<ChartData<'line'>>(() => {
-  if (!studentHistory.data?.records) {
-    return {
-      labels: [],
-      datasets: []
-    }
-  }
-
-  const records = studentHistory.data.records
-  return {
-    labels: records.map((r: any) => r.academicYear),
-    datasets: [
-      {
-        label: '总分',
-        data: records.map((r: any) => r.totalScore),
-        borderColor: 'rgb(99, 102, 241)',
-        backgroundColor: 'rgba(99, 102, 241, 0.1)',
-        tension: 0.3,
-        fill: true
-      }
-    ]
-  }
-})
-
-// 学生历史成绩图表配置
-const studentHistoryOptions: ChartOptions<'line'> = {
+const stackedBarOptions: ChartOptions<'bar'> = {
   responsive: true,
+  indexAxis: 'y',
   maintainAspectRatio: false,
   plugins: {
-    title: {
-      display: true,
-      text: '学生历年成绩趋势',
-      font: {
-        size: 16,
-        weight: 'bold'
-      }
-    },
-    tooltip: {
-      callbacks: {
-        label: (context) => {
-          return `总分: ${context.parsed.y?.toFixed(2) || '0'}`
-        }
-      }
-    }
+    legend: { position: 'bottom' },
+    tooltip: { mode: 'index', intersect: false }
   },
   scales: {
-    y: {
+    x: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } },
+    y: { stacked: true }
+  }
+}
+
+const scoreDistributionBarOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    y: { beginAtZero: true, ticks: { stepSize: 1 } }
+  }
+}
+
+const itemAverageOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  indexAxis: 'y',
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { beginAtZero: true, max: 100 }
+  }
+}
+
+const doughnutOptions: ChartOptions<'doughnut'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'bottom' } },
+  cutout: '62%'
+}
+
+const radarOptions: ChartOptions<'radar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'bottom' } },
+  scales: {
+    r: {
       beginAtZero: true,
       max: 100,
-      title: {
-        display: true,
-        text: '总分'
-      }
-    },
-    x: {
-      title: {
-        display: true,
-        text: '学年'
-      }
+      ticks: { stepSize: 20 },
+      pointLabels: { font: { size: 12 } }
     }
   }
 }
 
-// 加载表单和班级列表
+const trendOptions: ChartOptions<'line'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'bottom' } },
+  scales: {
+    y: { beginAtZero: true, max: 100 }
+  }
+}
+
 const loadFormAndClassData = async () => {
   loading.value = true
   try {
@@ -333,7 +511,6 @@ const loadFormAndClassData = async () => {
   }
 }
 
-// 查询统计数据
 const queryStats = async () => {
   if (!filters.formId) {
     toast.warning('请选择体测表单')
@@ -345,12 +522,9 @@ const queryStats = async () => {
     let response: StatisticsSummaryResponse
 
     switch (filters.dimension) {
-      case StatsDimension.SCHOOL:
-        response = await statisticsAPI.getFormStats(filters.formId)
-        break
       case StatsDimension.GRADE:
         if (!filters.gradeLevel) {
-          toast.warning('请选择年级')
+          toast.warning(gradeOptions.value.length ? `请选择${schoolLevelLabel.value}入学级` : '当前表单没有可统计的入学级班级')
           return
         }
         response = await statisticsAPI.getGradeStats(filters.formId, filters.gradeLevel)
@@ -362,11 +536,16 @@ const queryStats = async () => {
         }
         response = await statisticsAPI.getClassStats(filters.formId, filters.classId)
         break
+      case StatsDimension.SCHOOL:
       default:
         response = await statisticsAPI.getFormStats(filters.formId)
     }
 
     statsData.value = response
+    appliedFilters.formId = filters.formId
+    appliedFilters.dimension = filters.dimension
+    appliedFilters.gradeLevel = filters.gradeLevel
+    appliedFilters.classId = filters.classId
     toast.success('统计数据加载成功')
   } catch (error: any) {
     toast.error(error.message || '查询统计数据失败')
@@ -376,7 +555,6 @@ const queryStats = async () => {
   }
 }
 
-// 查询学生历史成绩
 const queryStudentHistory = async () => {
   if (!studentHistory.studentId) {
     toast.warning('请输入学生ID')
@@ -385,8 +563,7 @@ const queryStudentHistory = async () => {
 
   studentHistory.loading = true
   try {
-    const response = await statisticsAPI.getStudentHistory(Number(studentHistory.studentId))
-    studentHistory.data = response
+    studentHistory.data = await statisticsAPI.getStudentHistory(Number(studentHistory.studentId))
     toast.success('学生历史数据加载成功')
   } catch (error: any) {
     toast.error(error.message || '查询学生历史数据失败')
@@ -396,13 +573,17 @@ const queryStudentHistory = async () => {
   }
 }
 
-// 重置维度相关的筛选条件
 watch(() => filters.dimension, () => {
   filters.gradeLevel = undefined
   filters.classId = undefined
 })
 
-// 组件挂载时加载数据
+watch(() => filters.formId, () => {
+  filters.gradeLevel = undefined
+  filters.classId = undefined
+  statsData.value = null
+})
+
 onMounted(() => {
   loadFormAndClassData()
 })
@@ -410,384 +591,294 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
-    <div class="space-y-6">
-      <!-- 页面标题 -->
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold text-gray-900">统计分析</h1>
-          <p class="mt-1 text-sm text-gray-600">多维度数据统计与可视化分析</p>
-        </div>
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">统计分析</h1>
+        <p class="mt-1 text-sm text-gray-600">按全校、级部、班级分层查看体测数据，避免不同入学级混合对比</p>
       </div>
+    </div>
 
-      <!-- 筛选区域 -->
-      <Card title="筛选条件">
-        <div v-if="loading" class="flex justify-center py-8">
-          <Loading />
-        </div>
-        <div v-else class="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <!-- 选择体测表单 -->
-          <Select
-            v-model="filters.formId"
-            :options="formOptions"
-            label="体测表单"
-            placeholder="请选择体测表单"
-          />
-
-          <!-- 选择统计维度 -->
-          <Select
-            v-model="filters.dimension"
-            :options="dimensionOptions"
-            label="统计维度"
-            placeholder="请选择统计维度"
-          />
-
-          <!-- 选择年级（年级统计时显示） -->
-          <Select
-            v-if="filters.dimension === StatsDimension.GRADE"
-            v-model="filters.gradeLevel"
-            :options="gradeOptions"
-            label="选择年级"
-            placeholder="请选择年级"
-          />
-
-          <!-- 选择班级（班级统计时显示） -->
-          <Select
-            v-if="filters.dimension === StatsDimension.CLASS"
-            v-model="filters.classId"
-            :options="classOptions"
-            label="选择班级"
-            placeholder="请选择班级"
-          />
-
-          <!-- 查询按钮 -->
-          <div class="flex items-end">
-            <Button
-              variant="primary"
-              @click="queryStats"
-              :disabled="dataLoading"
-              class="w-full"
-            >
-              <ChartBarIcon class="h-5 w-5 mr-2" />
-              {{ dataLoading ? '查询中...' : '查询统计' }}
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <!-- 数据加载中 -->
-      <div v-if="dataLoading" class="flex justify-center py-12">
+    <Card title="筛选条件">
+      <div v-if="loading" class="flex justify-center py-8">
         <Loading />
       </div>
-
-      <!-- 统计数据展示 -->
-      <template v-else-if="statsData">
-        <!-- 整体统计卡片 -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <!-- 参与学生总数 -->
-          <Card>
-            <div class="flex items-center">
-              <div class="flex-shrink-0 p-3 bg-blue-100 rounded-lg">
-                <UserGroupIcon class="h-8 w-8 text-blue-600" />
-              </div>
-              <div class="ml-4">
-                <p class="text-sm font-medium text-gray-600">参与学生</p>
-                <p class="text-2xl font-bold text-gray-900">{{ statsData.totalStudents }}</p>
-              </div>
-            </div>
-          </Card>
-
-          <!-- 完成率 -->
-          <Card>
-            <div class="flex items-center">
-              <div class="flex-shrink-0 p-3 bg-green-100 rounded-lg">
-                <CheckCircleIcon class="h-8 w-8 text-green-600" />
-              </div>
-              <div class="ml-4">
-                <p class="text-sm font-medium text-gray-600">完成率</p>
-                <p class="text-2xl font-bold text-gray-900">{{ (statsData.submissionRate * 100).toFixed(1) }}%</p>
-              </div>
-            </div>
-          </Card>
-
-          <!-- 平均分 -->
-          <Card>
-            <div class="flex items-center">
-              <div class="flex-shrink-0 p-3 bg-purple-100 rounded-lg">
-                <AcademicCapIcon class="h-8 w-8 text-purple-600" />
-              </div>
-              <div class="ml-4">
-                <p class="text-sm font-medium text-gray-600">平均分</p>
-                <p class="text-2xl font-bold text-gray-900">{{ statsData.averageScore.toFixed(2) }}</p>
-              </div>
-            </div>
-          </Card>
-
-          <!-- 优秀率 -->
-          <Card>
-            <div class="flex items-center">
-              <div class="flex-shrink-0 p-3 bg-yellow-100 rounded-lg">
-                <TrophyIcon class="h-8 w-8 text-yellow-600" />
-              </div>
-              <div class="ml-4">
-                <p class="text-sm font-medium text-gray-600">优秀率</p>
-                <p class="text-2xl font-bold text-gray-900">
-                  {{ ((statsData.gradeDistribution.excellent / statsData.submittedCount) * 100).toFixed(1) }}%
-                </p>
-              </div>
-            </div>
-          </Card>
-
-          <!-- 及格率 -->
-          <Card>
-            <div class="flex items-center">
-              <div class="flex-shrink-0 p-3 bg-indigo-100 rounded-lg">
-                <ClipboardDocumentCheckIcon class="h-8 w-8 text-indigo-600" />
-              </div>
-              <div class="ml-4">
-                <p class="text-sm font-medium text-gray-600">及格率</p>
-                <p class="text-2xl font-bold text-gray-900">
-                  {{ (((statsData.submittedCount - statsData.gradeDistribution.fail) / statsData.submittedCount) * 100).toFixed(1) }}%
-                </p>
-              </div>
-            </div>
-          </Card>
+      <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <Select v-model="filters.formId" :options="formOptions" label="体测表单" placeholder="请选择体测表单" />
+        <Select v-model="filters.dimension" :options="dimensionOptions" label="统计维度" placeholder="请选择统计维度" />
+        <Select
+          v-if="filters.dimension === StatsDimension.GRADE"
+          v-model="filters.gradeLevel"
+          :options="gradeOptions"
+          label="选择入学级"
+          :placeholder="`请选择${schoolLevelLabel}入学级`"
+        />
+        <Select
+          v-if="filters.dimension === StatsDimension.CLASS"
+          v-model="filters.classId"
+          :options="classOptions"
+          label="选择班级"
+          placeholder="请选择班级"
+        />
+        <div class="flex items-end">
+          <Button variant="primary" @click="queryStats" :disabled="dataLoading" class="w-full">
+            <ChartBarIcon class="mr-2 h-5 w-5" />
+            {{ dataLoading ? '查询中...' : '查询统计' }}
+          </Button>
         </div>
+      </div>
+    </Card>
 
-        <!-- 图表区域 -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <!-- 分数分布图 -->
-          <Card>
-            <div class="h-80">
-              <Bar
-                :data="scoreDistributionData"
-                :options="scoreDistributionOptions"
-              />
-            </div>
-          </Card>
+    <div v-if="dataLoading" class="flex justify-center py-12">
+      <Loading />
+    </div>
 
-          <!-- 各项目平均成绩 -->
-          <Card v-if="statsData.itemSummaries && statsData.itemSummaries.length > 0">
-            <div class="h-80">
-              <Bar
-                :data="itemAverageData"
-                :options="itemAverageOptions"
-              />
-            </div>
-          </Card>
-        </div>
-
-        <!-- 班级统计详情表格（全校/年级统计时显示） -->
-        <Card
-          v-if="statsData.classSummaries && statsData.classSummaries.length > 0"
-          title="班级统计详情"
-        >
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    班级名称
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    总人数
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    已提交
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    平均分
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    及格率
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    优秀率
-                  </th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
-                <tr
-                  v-for="cls in statsData.classSummaries"
-                  :key="cls.classId"
-                  class="hover:bg-gray-50"
-                >
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {{ cls.className }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ cls.totalStudents }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ cls.submittedCount }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ cls.averageScore.toFixed(2) }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ (cls.passRate * 100).toFixed(1) }}%
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ (cls.excellentRate * 100).toFixed(1) }}%
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+    <template v-else-if="statsData">
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 rounded-lg bg-blue-100 p-3"><UserGroupIcon class="h-8 w-8 text-blue-600" /></div>
+            <div class="ml-4"><p class="text-sm font-medium text-gray-600">参与人数</p><p class="text-2xl font-bold text-gray-900">{{ statsData.totalStudents }}</p><p class="mt-1 text-xs text-gray-500">已提交 {{ statsData.submittedCount }} 人</p></div>
           </div>
         </Card>
-
-        <!-- 项目统计详情表格 -->
-        <Card
-          v-if="statsData.itemSummaries && statsData.itemSummaries.length > 0"
-          title="项目统计详情"
-        >
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    项目名称
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    平均分
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    及格率
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    最高值
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    最低值
-                  </th>
-                </tr>
-              </thead>
-              <tbody class="bg-white divide-y divide-gray-200">
-                <tr
-                  v-for="item in statsData.itemSummaries"
-                  :key="item.itemCode"
-                  class="hover:bg-gray-50"
-                >
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {{ item.itemName }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ item.averageScore.toFixed(2) }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ (item.passRate * 100).toFixed(1) }}%
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ item.maxValue }}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {{ item.minValue }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 rounded-lg bg-green-100 p-3"><CheckCircleIcon class="h-8 w-8 text-green-600" /></div>
+            <div class="ml-4"><p class="text-sm font-medium text-gray-600">提交率</p><p class="text-2xl font-bold text-gray-900">{{ formatRatio(statsData.submissionRate) }}</p><p :class="deltaClass(statsData.comparison?.submissionRateDelta)" class="mt-1 inline-flex rounded px-1.5 py-0.5 text-xs">较上次 {{ formatSigned(statsData.comparison?.submissionRateDelta, '个百分点') }}</p></div>
           </div>
         </Card>
-      </template>
-
-      <!-- 学生历史查询 -->
-      <Card title="学生历史成绩查询">
-        <div class="space-y-4">
-          <div class="flex gap-4">
-            <div class="flex-1">
-              <input
-                v-model="studentHistory.studentId"
-                type="text"
-                placeholder="请输入学生ID"
-                class="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                @keyup.enter="queryStudentHistory"
-              />
-            </div>
-            <Button
-              variant="primary"
-              @click="queryStudentHistory"
-              :disabled="studentHistory.loading"
-            >
-              {{ studentHistory.loading ? '查询中...' : '查询' }}
-            </Button>
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 rounded-lg bg-indigo-100 p-3"><AcademicCapIcon class="h-8 w-8 text-indigo-600" /></div>
+            <div class="ml-4"><p class="text-sm font-medium text-gray-600">平均分</p><p class="text-2xl font-bold text-gray-900">{{ statsData.averageScore.toFixed(2) }}</p><p :class="deltaClass(statsData.comparison?.averageScoreDelta)" class="mt-1 inline-flex rounded px-1.5 py-0.5 text-xs">较上次 {{ formatSigned(statsData.comparison?.averageScoreDelta, '分') }}</p></div>
           </div>
+        </Card>
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 rounded-lg bg-yellow-100 p-3"><TrophyIcon class="h-8 w-8 text-yellow-600" /></div>
+            <div class="ml-4"><p class="text-sm font-medium text-gray-600">优秀率</p><p class="text-2xl font-bold text-gray-900">{{ excellentRate }}</p><p :class="deltaClass(statsData.comparison?.excellentRateDelta)" class="mt-1 inline-flex rounded px-1.5 py-0.5 text-xs">较上次 {{ formatSigned(statsData.comparison?.excellentRateDelta, '个百分点') }}</p></div>
+          </div>
+        </Card>
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 rounded-lg bg-teal-100 p-3"><ClipboardDocumentCheckIcon class="h-8 w-8 text-teal-600" /></div>
+            <div class="ml-4"><p class="text-sm font-medium text-gray-600">及格率</p><p class="text-2xl font-bold text-gray-900">{{ passRate }}</p><p :class="deltaClass(statsData.comparison?.passRateDelta)" class="mt-1 inline-flex rounded px-1.5 py-0.5 text-xs">较上次 {{ formatSigned(statsData.comparison?.passRateDelta, '个百分点') }}</p></div>
+          </div>
+        </Card>
+      </div>
 
-          <!-- 学生历史数据展示 -->
-          <div v-if="studentHistory.data" class="space-y-4">
-            <!-- 学生基本信息 -->
-            <div class="p-4 bg-gray-50 rounded-lg">
-              <h4 class="text-sm font-semibold text-gray-700 mb-2">学生信息</h4>
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <span class="text-gray-600">姓名：</span>
-                  <span class="font-medium">{{ studentHistory.data.student?.name }}</span>
+      <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <Card title="成绩等级占比">
+          <div class="h-80"><Doughnut :data="scoreDistributionDoughnutData" :options="doughnutOptions" /></div>
+        </Card>
+        <Card title="成绩分布人数">
+          <div class="h-80"><Bar :data="scoreDistributionBarData" :options="scoreDistributionBarOptions" /></div>
+        </Card>
+        <Card title="风险提示">
+          <div class="space-y-4">
+            <div v-if="statsData.riskSummary?.mostFailedItem" class="rounded-md border border-red-100 bg-red-50 px-3 py-2">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex min-w-0 items-center gap-2">
+                  <ExclamationTriangleIcon class="h-4 w-4 flex-shrink-0 text-red-600" />
+                  <span class="truncate text-sm font-medium text-red-900">{{ statsData.riskSummary.mostFailedItem.itemName }}</span>
                 </div>
-                <div>
-                  <span class="text-gray-600">学号：</span>
-                  <span class="font-medium">{{ studentHistory.data.student?.studentIdSchool }}</span>
-                </div>
-                <div>
-                  <span class="text-gray-600">性别：</span>
-                  <span class="font-medium">{{ studentHistory.data.student?.gender === 'male' ? '男' : '女' }}</span>
-                </div>
-                <div>
-                  <span class="text-gray-600">记录数：</span>
-                  <span class="font-medium">{{ studentHistory.data.records?.length || 0 }} 次</span>
+                <span class="text-sm font-semibold text-red-700">{{ statsData.riskSummary.mostFailedItem.failCount || 0 }} 人不及格</span>
+              </div>
+              <div class="mt-1 text-xs text-red-700">均分 {{ statsData.riskSummary.mostFailedItem.averageScore.toFixed(2) }}，及格率 {{ formatPercent(statsData.riskSummary.mostFailedItem.passRate) }}</div>
+            </div>
+
+            <div v-if="isGradeScope">
+              <p class="mb-2 text-xs font-medium text-gray-500">低于当前级部均值最多的班级</p>
+              <div class="space-y-2">
+                <div v-for="cls in statsData.riskSummary?.belowAverageClasses || []" :key="cls.classId" class="rounded-md border border-amber-100 bg-amber-50 px-3 py-2">
+                  <div class="flex items-center justify-between gap-3 text-sm">
+                    <span class="font-medium text-amber-900">{{ cls.className }}</span>
+                    <span class="font-semibold text-amber-700">{{ cls.gap.toFixed(1) }} 分</span>
+                  </div>
+                  <div v-if="cls.weakItems?.length" class="mt-1 truncate text-xs text-amber-700">薄弱项：{{ cls.weakItems.map(item => item.itemName).join('、') }}</div>
                 </div>
               </div>
             </div>
 
-            <!-- 成绩趋势图 -->
-            <div v-if="studentHistory.data.records && studentHistory.data.records.length > 0" class="h-80">
-              <Line
-                :data="studentHistoryData"
-                :options="studentHistoryOptions"
-              />
-            </div>
-
-            <!-- 历史记录表格 -->
-            <div v-if="studentHistory.data.records && studentHistory.data.records.length > 0" class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                  <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      学年
-                    </th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      表单名称
-                    </th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      总分
-                    </th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      年级
-                    </th>
-                  </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                  <tr
-                    v-for="record in studentHistory.data.records"
-                    :key="record.id"
-                    class="hover:bg-gray-50"
-                  >
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {{ record.academicYear }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {{ record.formName }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {{ record.totalScore?.toFixed(2) || '-' }}
-                    </td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {{ record.gradeLevel || '-' }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <div v-if="!statsData.riskSummary?.mostFailedItem && !statsData.riskSummary?.belowAverageClasses?.length" class="py-10 text-center text-sm text-gray-500">暂无明显风险</div>
           </div>
+        </Card>
+      </div>
+
+      <Card v-if="isSchoolScope && statsData.gradeSummaries?.length" title="全校入学级概览">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">入学级</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">班级数</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">总人数</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">已提交</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">提交率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">平均分</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">及格率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">优秀率</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+              <tr v-for="grade in statsData.gradeSummaries" :key="grade.cohort" class="hover:bg-gray-50">
+                <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">{{ formatSchoolGradeName(grade.cohort, schoolLevelLabel) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ grade.totalClasses }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ grade.totalStudents }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ grade.submittedCount }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(grade.submissionRate) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ grade.averageScore.toFixed(2) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(grade.passRate) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(grade.excellentRate) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </Card>
-    </div>
+
+      <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card v-if="!isSchoolScope" :title="isClassScope ? '本班项目能力雷达图' : '级部项目能力雷达图'">
+          <div class="h-96"><Radar :data="radarData" :options="radarOptions" /></div>
+        </Card>
+        <Card :title="isSchoolScope ? '各入学级平均分趋势' : isGradeScope ? '当前级部平均分趋势' : '本班平均分趋势'">
+          <div class="h-96"><Line :data="trendData" :options="trendOptions" /></div>
+        </Card>
+        <Card v-if="statsData.trendMetricSeries?.series?.length" title="提交率 / 及格率 / 优秀率趋势">
+          <div class="h-96"><Line :data="trendMetricData" :options="trendOptions" /></div>
+        </Card>
+        <Card v-if="!isSchoolScope && statsData.itemTrendSeries?.series?.length" title="单项目历次变化">
+          <div class="h-96"><Line :data="itemTrendData" :options="trendOptions" /></div>
+        </Card>
+      </div>
+
+      <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card v-if="!isSchoolScope && statsData.itemSummaries?.length" title="各项目平均分">
+          <div class="h-96"><Bar :data="itemAverageData" :options="itemAverageOptions" /></div>
+        </Card>
+        <Card v-if="!isSchoolScope && statsData.genderSummaries?.length" title="男女生对比">
+          <div class="h-96"><Bar :data="genderComparisonData" :options="commonBarOptions" /></div>
+        </Card>
+      </div>
+
+      <Card v-if="isGradeScope && statsData.classSummaries?.length" title="本级部班级对比">
+        <div :style="{ height: classChartHeight }"><Bar :data="classComparisonData" :options="classComparisonOptions" /></div>
+      </Card>
+
+      <div v-if="isGradeScope && statsData.classSummaries?.length" class="space-y-6">
+        <Card title="班级等级分布">
+          <div :style="{ height: classChartHeight }"><Bar :data="classStackedDistributionData" :options="stackedBarOptions" /></div>
+        </Card>
+        <Card v-if="statsData.classItemHeatmap?.rows?.length" title="班级 × 项目均分热力图">
+          <div class="overflow-x-auto">
+            <table class="min-w-full border-separate border-spacing-1 text-sm">
+              <thead>
+                <tr>
+                  <th class="sticky left-0 bg-white px-3 py-2 text-left font-medium text-gray-600">班级</th>
+                  <th v-for="column in statsData.classItemHeatmap.columns" :key="column.itemCode" class="whitespace-nowrap px-3 py-2 text-center font-medium text-gray-600">{{ column.itemName }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in statsData.classItemHeatmap.rows" :key="row.classId">
+                  <td class="sticky left-0 whitespace-nowrap bg-white px-3 py-2 font-medium text-gray-900">{{ row.className }}</td>
+                  <td v-for="(value, index) in row.values" :key="index" :class="heatmapCellClass(value)" class="min-w-20 rounded px-3 py-2 text-center font-semibold">
+                    {{ value === null ? '-' : value.toFixed(1) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+
+      <Card v-if="isGradeScope && statsData.classSummaries?.length" title="本级部班级统计详情">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">班级名称</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">总人数</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">已提交</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">未提交</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">提交率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">平均分</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">及格率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">优秀率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">薄弱项目 Top 3</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+              <tr v-for="cls in statsData.classSummaries" :key="cls.classId" class="hover:bg-gray-50">
+                <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">{{ cls.className }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ cls.totalStudents }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ cls.submittedCount }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ cls.unsubmittedCount || 0 }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(cls.submissionRate || 0) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ cls.averageScore.toFixed(2) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(cls.passRate) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(cls.excellentRate) }}</td>
+                <td class="min-w-48 px-6 py-4 text-sm text-gray-500">{{ cls.weakItems?.length ? cls.weakItems.map(item => item.itemName).join('、') : '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card v-if="!isSchoolScope && statsData.itemSummaries?.length" title="项目统计详情">
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">项目名称</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">平均分</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">及格率</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">最高分</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">最低分</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+              <tr v-for="item in statsData.itemSummaries" :key="item.itemCode" class="hover:bg-gray-50">
+                <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">{{ item.itemName }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ item.averageScore.toFixed(2) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ formatPercent(item.passRate) }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ item.maxValue }}</td>
+                <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{ item.minValue }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </template>
+
+    <Card title="学生历史成绩查询">
+      <div class="space-y-4">
+        <div class="flex gap-4">
+          <input
+            v-model="studentHistory.studentId"
+            type="text"
+            placeholder="请输入学生ID"
+            class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            @keyup.enter="queryStudentHistory"
+          />
+          <Button variant="primary" @click="queryStudentHistory" :disabled="studentHistory.loading">
+            {{ studentHistory.loading ? '查询中...' : '查询' }}
+          </Button>
+        </div>
+
+        <div v-if="studentHistory.data" class="space-y-4">
+          <div class="rounded-lg bg-gray-50 p-4">
+            <h4 class="mb-2 text-sm font-semibold text-gray-700">学生信息</h4>
+            <div class="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
+              <div><span class="text-gray-600">姓名：</span><span class="font-medium">{{ studentHistory.data.student?.name }}</span></div>
+              <div><span class="text-gray-600">学号：</span><span class="font-medium">{{ studentHistory.data.student?.studentIdSchool }}</span></div>
+              <div><span class="text-gray-600">性别：</span><span class="font-medium">{{ studentHistory.data.student?.gender === 'male' ? '男' : '女' }}</span></div>
+              <div><span class="text-gray-600">记录数：</span><span class="font-medium">{{ studentHistory.data.history?.length || 0 }} 次</span></div>
+            </div>
+          </div>
+
+          <div v-if="studentHistory.data.history?.length" class="h-80">
+            <Line :data="studentHistoryData" :options="trendOptions" />
+          </div>
+        </div>
+      </div>
+    </Card>
   </div>
 </template>

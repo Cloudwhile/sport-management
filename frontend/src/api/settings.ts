@@ -60,6 +60,17 @@ const settingsAPI = {
    */
   batchUpdateSettings(settings: Record<string, string>): Promise<{ message: string }> {
     return http.put('/settings', { settings })
+  },
+
+  uploadSettingImage(key: string, file: File): Promise<{ key: string; value: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    return http.post(`/settings/${key}/image`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
   }
 }
 

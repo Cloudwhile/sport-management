@@ -292,27 +292,105 @@ export interface ClassStatistics {
   className: string;
   totalStudents: number;
   submittedCount: number;
+  submissionRate?: number;
+  unsubmittedCount?: number;
   averageScore: number;
   passRate: number;
   excellentRate: number;
+  gradeDistribution?: GradeDistribution;
+  weakItems?: ItemStatistics[];
 }
-
 // 项目统计数据
 export interface ItemStatistics {
   itemCode: string;
   itemName: string;
   averageScore: number;
   passRate: number;
+  passCount?: number;
+  failCount?: number;
   maxValue: number;
   minValue: number;
+  sampleCount?: number;
 }
-
 // 成绩分布
 export interface GradeDistribution {
   excellent: number;
   good: number;
   pass: number;
   fail: number;
+}
+export interface GenderStatistics {
+  gender: 'male' | 'female';
+  genderName: string;
+  count: number;
+  submittedCount: number;
+  averageScore: number;
+  passRate: number;
+  excellentRate: number;
+}
+
+export interface RadarSeriesResponse {
+  labels: string[];
+  series: Array<{
+    name: string;
+    data: number[];
+  }>;
+}
+
+export interface TrendSeriesResponse {
+  labels: string[];
+  series: Array<{
+    name: string;
+    itemCode?: string;
+    data: number[];
+  }>;
+}
+
+export interface StatisticsComparison {
+  previousFormId: number;
+  previousFormName: string;
+  previousTestDate?: string;
+  averageScoreDelta: number;
+  passRateDelta: number;
+  excellentRateDelta: number;
+  submissionRateDelta: number;
+}
+
+export interface StatisticsRiskSummary {
+  mostFailedItem: ItemStatistics | null;
+  belowAverageClasses: Array<{
+    classId: number;
+    className: string;
+    averageScore: number;
+    gap: number;
+    weakItems?: ItemStatistics[];
+  }>;
+}
+
+export interface ClassItemHeatmap {
+  columns: Array<{ itemCode: string; itemName: string }>;
+  rows: Array<{
+    classId: number;
+    className: string;
+    values: Array<number | null>;
+  }>;
+}
+
+export interface GradeStatistics {
+  cohort: string;
+  gradeName: string;
+  totalClasses: number;
+  totalStudents: number;
+  submittedCount: number;
+  submissionRate: number;
+  averageScore: number;
+  passRate: number;
+  excellentRate: number;
+  gradeDistribution?: GradeDistribution;
+}
+export interface StatisticsWeaknesses {
+  weakItems: ItemStatistics[];
+  weakClasses: ClassStatistics[];
 }
 
 // 整体统计响应（Dashboard 用）
@@ -334,10 +412,20 @@ export interface StatisticsSummaryResponse {
   submissionRate: number;
   averageScore: number;
   gradeDistribution: GradeDistribution;
+  scoreDistribution?: GradeDistribution;
   classSummaries?: ClassStatistics[];
+  gradeSummaries?: GradeStatistics[];
   itemSummaries?: ItemStatistics[];
+  genderSummaries?: GenderStatistics[];
+  radarSeries?: RadarSeriesResponse;
+  trendSeries?: TrendSeriesResponse;
+  trendMetricSeries?: TrendSeriesResponse;
+  itemTrendSeries?: TrendSeriesResponse;
+  classItemHeatmap?: ClassItemHeatmap;
+  comparison?: StatisticsComparison | null;
+  riskSummary?: StatisticsRiskSummary;
+  weaknesses?: StatisticsWeaknesses;
 }
-
 // 学生历史体测记录
 export interface StudentTestRecord {
   id: number;
@@ -352,9 +440,12 @@ export interface StudentTestRecord {
   scores: Record<string, number>;
   totalScore: number;
   gradeLevel: string;
+  percentile?: {
+    class: number;
+    grade: number;
+  };
   submittedAt: string;
 }
-
 // 学生历史体测响应
 export interface StudentHistoryResponse {
   student: {

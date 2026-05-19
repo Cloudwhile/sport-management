@@ -71,6 +71,10 @@ http.interceptors.response.use(
     return result
   },
   (error: AxiosError<{ message?: string; error?: string }>) => {
+    if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
+
     console.error('[HTTP Response Error]', error)
 
     // 网络错误（没有 response）
@@ -80,6 +84,13 @@ http.interceptors.response.use(
     }
 
     const { status, data, config } = error.response
+
+    const createHttpError = (message: string) => {
+      const err = new Error(message) as Error & { responseData?: unknown; status?: number }
+      err.responseData = data
+      err.status = status
+      return err
+    }
 
     // 获取错误消息（兼容 message 和 error 字段）
     const getErrorMessage = (defaultMsg: string) => {
@@ -95,7 +106,7 @@ http.interceptors.response.use(
         if (isLoginRequest) {
           // 登录请求的 401 错误，返回错误信息供登录页面显示
           const errorMessage = getErrorMessage('用户名或密码错误')
-          return Promise.reject(new Error(errorMessage))
+          return Promise.reject(createHttpError(errorMessage))
         } else {
           // 其他请求的 401 错误，说明 Token 过期或无效，清除 token 并跳转到登录页
           console.warn('认证失败，请重新登录')
@@ -108,19 +119,19 @@ http.interceptors.response.use(
         // 权限不足
         const forbiddenMsg = getErrorMessage('权限不足，无法访问该资源')
         console.error(forbiddenMsg)
-        return Promise.reject(new Error(forbiddenMsg))
+        return Promise.reject(createHttpError(forbiddenMsg))
 
       case 500:
         // 服务器错误
         const serverErrorMsg = getErrorMessage('服务器错误，请稍后重试')
         console.error(serverErrorMsg)
-        return Promise.reject(new Error(serverErrorMsg))
+        return Promise.reject(createHttpError(serverErrorMsg))
 
       default:
         // 其他错误，显示后端返回的错误消息
         const errorMessage = getErrorMessage(`请求失败 (${status})`)
         console.error(errorMessage)
-        return Promise.reject(new Error(errorMessage))
+        return Promise.reject(createHttpError(errorMessage))
     }
 
     return Promise.reject(error)

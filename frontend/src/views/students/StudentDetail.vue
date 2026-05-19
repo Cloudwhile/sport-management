@@ -22,6 +22,8 @@ import Loading from '@/components/common/Loading.vue'
 import Modal from '@/components/common/Modal.vue'
 import statisticsAPI from '@/api/statistics'
 import { useToast } from '@/composables/useToast'
+import { formatHighSchoolClassName } from '@/utils/classNameFormatter'
+import { useSettingsStore } from '@/stores'
 import type { StudentHistoryResponse, StudentTestRecord } from '@/types'
 import {
   ArrowLeftIcon,
@@ -32,6 +34,9 @@ import {
   CalendarIcon,
   EyeIcon
 } from '@heroicons/vue/24/outline'
+
+const settingsStore = useSettingsStore()
+const schoolLevelLabel = computed(() => settingsStore.schoolLevelLabel)
 
 // 注册 Chart.js 组件
 ChartJS.register(
@@ -70,6 +75,19 @@ const formatDate = (dateStr: string) => {
   return new Date(dateStr).toLocaleDateString('zh-CN')
 }
 
+const itemNameMap: Record<string, string> = {
+  bmi: 'BMI',
+  lung_capacity: '肺活量',
+  sprint_50m: '50米跑',
+  standing_jump: '立定跳远',
+  sit_reach: '坐位体前屈',
+  situp_1min: '仰卧起坐',
+  pullup: '引体向上',
+  run_800m: '800米跑',
+  run_1000m: '1000米跑'
+}
+
+const getItemDisplayName = (itemCode: string): string => itemNameMap[itemCode] || itemCode
 // 格式化分数
 const formatScore = (score: any) => {
   if (score === null || score === undefined) return '-'
@@ -143,6 +161,20 @@ const statistics = computed(() => {
   }
 })
 
+const sortedHistory = computed(() => {
+  return [...(studentData.value?.history || [])].sort((a, b) =>
+    new Date(a.testDate).getTime() - new Date(b.testDate).getTime()
+  )
+})
+
+const latestRecord = computed(() => {
+  if (!sortedHistory.value.length) return null
+  return sortedHistory.value[sortedHistory.value.length - 1]
+})
+
+const latestPercentile = computed(() => {
+  return latestRecord.value?.percentile || { class: 0, grade: 0 }
+})
 // 成绩趋势图数据
 const trendChartData = computed<ChartData<'line'>>(() => {
   if (!studentData.value || !studentData.value.history.length) {
@@ -172,6 +204,29 @@ const trendChartData = computed<ChartData<'line'>>(() => {
   }
 })
 
+const itemTrendChartData = computed<ChartData<'line'>>(() => {
+  const history = sortedHistory.value
+  const itemCodes = Array.from(new Set(history.flatMap(record => Object.keys(record.scores || {}))))
+    .filter(code => code !== 'height' && code !== 'weight')
+
+  const colors = ['rgb(37, 99, 235)', 'rgb(16, 185, 129)', 'rgb(245, 158, 11)', 'rgb(239, 68, 68)', 'rgb(139, 92, 246)', 'rgb(14, 165, 233)']
+
+  return {
+    labels: history.map(record => record.formName || record.academicYear),
+    datasets: itemCodes.map((code, index) => {
+      const color = colors[index % colors.length] || 'rgb(37, 99, 235)'
+      return {
+        label: getItemDisplayName(code),
+        data: history.map(record => Number(record.scores?.[code]) || 0),
+        borderColor: color,
+        backgroundColor: color.replace('rgb', 'rgba').replace(')', ', 0.1)'),
+        tension: 0.3,
+        fill: false,
+        pointRadius: 3
+      }
+    })
+  }
+})
 const trendChartOptions: ChartOptions<'line'> = {
   responsive: true,
   maintainAspectRatio: false,
@@ -211,6 +266,17 @@ const trendChartOptions: ChartOptions<'line'> = {
   }
 }
 
+const itemTrendChartOptions: ChartOptions<'line'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { position: 'bottom' },
+    tooltip: { mode: 'index', intersect: false }
+  },
+  scales: {
+    y: { beginAtZero: true, max: 100 }
+  }
+}
 // 雷达图数据（最近一次体测）
 const radarChartData = computed<ChartData<'radar'>>(() => {
   if (!studentData.value || !studentData.value.history.length) {
@@ -408,7 +474,7 @@ onMounted(() => {
       </Card>
 
       <!-- 统计概览 -->
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <Card>
           <div class="flex items-center">
             <div class="flex-shrink-0 p-3 bg-blue-100 rounded-lg">
@@ -458,7 +524,30 @@ onMounted(() => {
             </div>
           </div>
         </Card>
-      </div>
+
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 p-3 bg-teal-100 rounded-lg">
+              <TrophyIcon class="h-8 w-8 text-teal-600" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-600">班级百分位</p>
+              <p class="text-2xl font-bold text-gray-900">{{ latestPercentile.class.toFixed(1) }}%</p>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <div class="flex items-center">
+            <div class="flex-shrink-0 p-3 bg-indigo-100 rounded-lg">
+              <TrophyIcon class="h-8 w-8 text-indigo-600" />
+            </div>
+            <div class="ml-4">
+              <p class="text-sm font-medium text-gray-600">级部百分位</p>
+              <p class="text-2xl font-bold text-gray-900">{{ latestPercentile.grade.toFixed(1) }}%</p>
+            </div>
+          </div>
+        </Card>      </div>
 
       <!-- 等级分布 -->
       <Card title="等级分布">
@@ -509,7 +598,13 @@ onMounted(() => {
             <Radar :data="radarChartData" :options="radarChartOptions" />
           </div>
         </Card>
-      </div>
+
+        <!-- 项目趋势图 -->
+        <Card>
+          <div class="h-80">
+            <Line :data="itemTrendChartData" :options="itemTrendChartOptions" />
+          </div>
+        </Card>      </div>
 
       <!-- 历史体测记录列表 -->
       <Card title="历史体测记录">
@@ -555,7 +650,7 @@ onMounted(() => {
                   {{ formatDate(record.testDate) }}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {{ record.cohort }} {{ record.className }}
+                  {{ formatHighSchoolClassName(record.cohort, record.className, schoolLevelLabel) }}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                   {{ formatScore(record.totalScore) }}

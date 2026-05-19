@@ -13,6 +13,7 @@ const settingsStore = useSettingsStore()
 
 // 获取应用标题
 const appTitle = computed(() => settingsStore.appTitle)
+const siteLogoUrl = computed(() => settingsStore.siteLogoUrl)
 
 // 计算角色显示名称
 const roleLabel = computed(() => {
@@ -69,8 +70,16 @@ const handleLogout = async () => {
           <Bars3Icon class="w-6 h-6" />
         </button>
 
-        <div class="flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600">
-          <span class="text-white font-bold text-lg">体测</span>
+        <div class="flex h-10 min-w-10 items-center justify-center">
+          <img
+            v-if="siteLogoUrl"
+            :src="siteLogoUrl"
+            :alt="appTitle"
+            class="h-10 max-w-32 object-contain"
+          />
+          <div v-else class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600">
+            <span class="text-white font-bold text-lg">体测</span>
+          </div>
         </div>
         <h1 class="text-xl font-semibold text-gray-900">{{ appTitle }}</h1>
       </div>

@@ -2,6 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import settingsAPI, { type SettingsResponse } from '@/api/settings'
 
+export type SchoolLevel = 'primary' | 'junior' | 'senior'
+
+export const schoolLevelLabels: Record<SchoolLevel, string> = {
+  primary: '小学',
+  junior: '初中',
+  senior: '高中'
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   // 状态
   const settings = ref<SettingsResponse>({})
@@ -13,8 +21,20 @@ export const useSettingsStore = defineStore('settings', () => {
     return settings.value.app_title?.value || import.meta.env.VITE_APP_TITLE || '学校体测数据管理系统'
   })
 
+  const siteLogoUrl = computed(() => settings.value.site_logo_url?.value || '')
+  const homeImageUrl = computed(() => settings.value.home_image_url?.value || '')
+  const schoolLevel = computed<SchoolLevel>(() => {
+    const value = settings.value.school_level?.value as SchoolLevel | undefined
+    return value && schoolLevelLabels[value] ? value : 'senior'
+  })
+  const schoolLevelLabel = computed(() => schoolLevelLabels[schoolLevel.value])
+
   const getSetting = (key: string, defaultValue: string = '') => {
     return settings.value[key]?.value || defaultValue
+  }
+
+  const getSettingCategory = (key: string) => {
+    return key === 'school_level' || key === 'app_title' ? 'system' : 'appearance'
   }
 
   // Actions
@@ -54,6 +74,11 @@ export const useSettingsStore = defineStore('settings', () => {
       // 更新本地状态
       if (settings.value[key]) {
         settings.value[key].value = value
+      } else {
+        settings.value[key] = {
+          value,
+          category: getSettingCategory(key)
+        }
       }
     } catch (err: any) {
       error.value = err.message || '更新设置失败'
@@ -69,11 +94,35 @@ export const useSettingsStore = defineStore('settings', () => {
       Object.entries(updates).forEach(([key, value]) => {
         if (settings.value[key]) {
           settings.value[key].value = value
+        } else {
+          settings.value[key] = {
+            value,
+            category: getSettingCategory(key)
+          }
         }
       })
     } catch (err: any) {
       error.value = err.message || '批量更新设置失败'
       console.error('批量更新设置失败:', err)
+      throw err
+    }
+  }
+
+  const uploadSettingImage = async (key: string, file: File) => {
+    try {
+      const result = await settingsAPI.uploadSettingImage(key, file)
+      if (settings.value[key]) {
+        settings.value[key].value = result.value
+      } else {
+        settings.value[key] = {
+          value: result.value,
+          category: getSettingCategory(key)
+        }
+      }
+      return result
+    } catch (err: any) {
+      error.value = err.message || '上传图片失败'
+      console.error('上传设置图片失败:', err)
       throw err
     }
   }
@@ -86,12 +135,17 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Getters
     appTitle,
+    siteLogoUrl,
+    homeImageUrl,
+    schoolLevel,
+    schoolLevelLabel,
     getSetting,
 
     // Actions
     loadPublicSettings,
     loadSettings,
     updateSetting,
-    batchUpdateSettings
+    batchUpdateSettings,
+    uploadSettingImage
   }
 })

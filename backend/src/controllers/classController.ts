@@ -8,8 +8,8 @@ import {
   getGradeName,
   isGraduated,
   isValidCohort,
-  extractClassNumber,
 } from '../utils/gradeHelper.js';
+import { extractClassNumberFromClassName, normalizeClassName } from '../utils/classNameFormatter.js';
 
 /**
  * 班级控制器（基于cohort设计）
@@ -209,10 +209,11 @@ class ClassController {
       }
 
       // 检查是否已存在相同的班级
+      const normalizedClassName = normalizeClassName(className);
       const existingClass = await Class.findOne({
         where: {
           cohort,
-          className,
+          className: normalizedClassName,
         },
       });
 
@@ -225,8 +226,8 @@ class ClassController {
       }
 
       // 生成固定的班级账号：class_{入学年份}_{班号}
-      const classNumber = extractClassNumber(className);
-      const classAccount = `class_${cohort}_${classNumber}`;
+      const classNumber = extractClassNumberFromClassName(normalizedClassName);
+      const classAccount = `class_${cohort}_${String(classNumber).padStart(2, '0')}`;
 
       // 检查账号是否已被使用
       const existingAccount = await Class.findOne({
@@ -248,7 +249,7 @@ class ClassController {
       // 创建班级（毕业状态将自动计算）
       const newClass = await Class.create({
         cohort,
-        className,
+        className: normalizedClassName,
         classAccount,
         classPassword: hashedPassword,
       });
@@ -311,7 +312,7 @@ class ClassController {
       // 检查是否与其他班级重名
       if (cohort || className) {
         const checkCohort = cohort || classData.get('cohort');
-        const checkClassName = className || classData.get('className');
+        const checkClassName = className ? normalizeClassName(className) : classData.get('className');
 
         const existingClass = await Class.findOne({
           where: {
@@ -333,16 +334,16 @@ class ClassController {
       // 更新班级信息（毕业状态将自动计算）
       const updateData: any = {};
       if (cohort) updateData.cohort = cohort;
-      if (className) updateData.className = className;
+      if (className) updateData.className = normalizeClassName(className);
 
       // 如果更新了cohort或className，重新生成班级账号
       if (cohort || className) {
         const finalCohort = cohort || classData.get('cohort');
-        const finalClassName = className || classData.get('className');
+        const finalClassName = className ? normalizeClassName(className) : classData.get('className');
 
         const cohortYear = (finalCohort as string).replace(/级$/, '');
-        const classNumber = extractClassNumber(finalClassName as string);
-        updateData.classAccount = `class_${cohortYear}_${classNumber}`;
+        const classNumber = extractClassNumberFromClassName(finalClassName as string);
+        updateData.classAccount = `class_${cohortYear}_${String(classNumber).padStart(2, '0')}`;
       }
 
       await classData.update(updateData);
