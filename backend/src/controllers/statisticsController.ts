@@ -1,760 +1,846 @@
 // @ts-nocheck
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
-import sequelize from '../database/connection.js';
 import PhysicalTestRecord from '../models/PhysicalTestRecord.js';
 import PhysicalTestForm from '../models/PhysicalTestForm.js';
 import FormTestItem from '../models/FormTestItem.js';
 import Student from '../models/Student.js';
 import Class from '../models/Class.js';
 import StudentClassRelation from '../models/StudentClassRelation.js';
-import { calculateGradeLevel, getCurrentAcademicYear } from '../utils/gradeHelper.js';
+import { calculateGradeLevel } from '../utils/gradeHelper.js';
+import { formatHighSchoolClassName } from '../utils/classNameFormatter.js';
 
-/**
- * 获取整体统计数据
- */
+const EXCLUDED_ANALYSIS_ITEM_CODES = new Set(['height', 'weight']);
+
+const SCORE_LEVELS = [
+  { key: 'excellent', label: '优秀', min: 90 },
+  { key: 'good', label: '良好', min: 80 },
+  { key: 'pass', label: '及格', min: 60 },
+  { key: 'fail', label: '不及格', min: -Infinity },
+];
+
+const toNumber = (value: unknown): number => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+};
+
+const round = (value: number, digits = 2): number => {
+  return Number((Number.isFinite(value) ? value : 0).toFixed(digits));
+};
+
+const clamp = (value: number, min: number, max: number): number => {
+  return Math.min(max, Math.max(min, value));
+};
+
+const toPercent = (numerator: number, denominator: number, digits = 2): number => {
+  if (denominator <= 0) return 0;
+  return round(clamp((numerator / denominator) * 100, 0, 100), digits);
+};
+
+const toRatio = (numerator: number, denominator: number, digits = 4): number => {
+  if (denominator <= 0) return 0;
+  return round(clamp(numerator / denominator, 0, 1), digits);
+};
+
+const calculatePercentile = (score: number, peerScores: number[]): number => {
+  const validScores = peerScores.filter(item => Number.isFinite(item));
+  if (!Number.isFinite(score) || validScores.length === 0) return 0;
+  const lowerOrEqualCount = validScores.filter(item => item <= score).length;
+  return toPercent(lowerOrEqualCount, validScores.length, 1);
+};
+
+const getScoreLevel = (score: number): string => {
+  return SCORE_LEVELS.find(level => score >= level.min)?.key || 'fail';
+};
+
+const formatHighSchoolGradeName = (cohort?: string | number | null): string => {
+  const cohortText = String(cohort ?? '').trim();
+  const cohortYear = cohortText.match(/\d{4}/)?.[0] || cohortText;
+  return cohortYear ? `高中${cohortYear}级` : '未指定入学级';
+};
+
+const getCohortFromGradeLevel = (gradeLevel: number, academicYear: string): string => {
+  const startYear = Number(String(academicYear || '').match(/\d{4}/)?.[0]);
+  if (!Number.isFinite(startYear) || !Number.isFinite(gradeLevel)) return '';
+  return String(startYear - gradeLevel + 1);
+};
+const getUniqueStudentCount = (records: any[]): number => {
+  return new Set(records.map(record => record.studentId).filter(Boolean)).size;
+};
+const getRecordsAverage = (records: any[]): number => {
+  if (records.length === 0) return 0;
+  const total = records.reduce((sum, record) => sum + toNumber(record.totalScore), 0);
+  return round(total / records.length);
+};
+
+
+const getRecordItemScore = (record: any, itemCode: string): number | null => {
+  const rawValue = (record.scores || {})[itemCode];
+  if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+  const score = Number(rawValue);
+  return Number.isFinite(score) ? score : null;
+};
+
+const buildGradeDistribution = (records: any[]) => {
+  const distribution = { excellent: 0, good: 0, pass: 0, fail: 0 };
+
+  records.forEach(record => {
+    distribution[getScoreLevel(toNumber(record.totalScore))]++;
+  });
+
+  return distribution;
+};
+
+const getItemsForForm = async (formId: number | string) => {
+  return FormTestItem.findAll({
+    where: { formId },
+    order: [['sortOrder', 'ASC']],
+  });
+};
+
+const getAnalysisItemsForForm = async (formId: number | string) => {
+  const items = await getItemsForForm(formId);
+  return items.filter(item => !EXCLUDED_ANALYSIS_ITEM_CODES.has(item.itemCode));
+};
+const buildItemSummaries = (items: any[], records: any[]) => {
+  return items.map(item => {
+    const itemScores = records
+      .map(record => getRecordItemScore(record, item.itemCode))
+      .filter((score): score is number => score !== null);
+
+    const averageScore = itemScores.length > 0
+      ? itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length
+      : 0;
+    const passCount = itemScores.filter(score => score >= 60).length;
+
+    return {
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      averageScore: round(averageScore),
+      passRate: toPercent(passCount, itemScores.length),
+      passCount,
+      failCount: itemScores.length - passCount,
+      maxValue: itemScores.length > 0 ? round(Math.max(...itemScores)) : 0,
+      minValue: itemScores.length > 0 ? round(Math.min(...itemScores)) : 0,
+      sampleCount: itemScores.length,
+    };
+  });
+};
+
+const buildGenderSummaries = (records: any[]) => {
+  return ['male', 'female'].map(gender => {
+    const genderRecords = records.filter(record => record.student?.gender === gender);
+    const passCount = genderRecords.filter(record => toNumber(record.totalScore) >= 60).length;
+    const excellentCount = genderRecords.filter(record => toNumber(record.totalScore) >= 90).length;
+
+    return {
+      gender,
+      genderName: gender === 'male' ? '男生' : '女生',
+      count: getUniqueStudentCount(genderRecords),
+      submittedCount: getUniqueStudentCount(genderRecords),
+      averageScore: getRecordsAverage(genderRecords),
+      passRate: toPercent(passCount, genderRecords.length),
+      excellentRate: toPercent(excellentCount, genderRecords.length),
+    };
+  }).filter(summary => summary.submittedCount > 0);
+};
+
+const buildRadarSeries = (items: any[], records: any[]) => {
+  const labels = items.map(item => item.itemName);
+  const buildData = (sourceRecords: any[]) => items.map(item => {
+    const itemScores = sourceRecords
+      .map(record => getRecordItemScore(record, item.itemCode))
+      .filter((score): score is number => score !== null);
+    return itemScores.length > 0
+      ? round(itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length)
+      : 0;
+  });
+
+  const series = [
+    { name: '整体平均', data: buildData(records) },
+  ];
+
+  const maleRecords = records.filter(record => record.student?.gender === 'male');
+  const femaleRecords = records.filter(record => record.student?.gender === 'female');
+
+  if (maleRecords.length > 0) {
+    series.push({ name: '男生平均', data: buildData(maleRecords) });
+  }
+  if (femaleRecords.length > 0) {
+    series.push({ name: '女生平均', data: buildData(femaleRecords) });
+  }
+
+  return { labels, series };
+};
+
+const buildWeaknesses = (itemSummaries: any[], classSummaries: any[] = []) => {
+  return {
+    weakItems: [...itemSummaries]
+      .filter(item => item.sampleCount > 0)
+      .sort((a, b) => a.passRate - b.passRate || a.averageScore - b.averageScore)
+      .slice(0, 5),
+    weakClasses: [...classSummaries]
+      .filter(item => item.submittedCount > 0)
+      .sort((a, b) => a.passRate - b.passRate || a.averageScore - b.averageScore)
+      .slice(0, 5),
+  };
+};
+
+const buildRiskSummary = (itemSummaries: any[], classSummaries: any[] = [], averageScore = 0) => {
+  const mostFailedItem = [...itemSummaries]
+    .filter(item => item.sampleCount > 0)
+    .sort((a, b) => b.failCount - a.failCount || a.passRate - b.passRate)[0] || null;
+
+  const belowAverageClasses = [...classSummaries]
+    .filter(item => item.submittedCount > 0 && item.averageScore < averageScore)
+    .map(item => ({
+      classId: item.classId,
+      className: item.className,
+      averageScore: item.averageScore,
+      gap: round(item.averageScore - averageScore),
+      weakItems: item.weakItems || [],
+    }))
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, 5);
+
+  return { mostFailedItem, belowAverageClasses };
+};
+
+const getScoreMetrics = (records: any[], totalStudents: number) => {
+  const submittedCount = Math.min(getUniqueStudentCount(records), totalStudents);
+  const passCount = records.filter(record => toNumber(record.totalScore) >= 60).length;
+  const excellentCount = records.filter(record => toNumber(record.totalScore) >= 90).length;
+
+  return {
+    totalStudents,
+    submittedCount,
+    submissionRate: toRatio(submittedCount, totalStudents),
+    averageScore: getRecordsAverage(records),
+    passRate: toPercent(passCount, records.length),
+    excellentRate: toPercent(excellentCount, records.length),
+  };
+};
+
+const fetchRecords = (where: any) => {
+  return PhysicalTestRecord.findAll({
+    where,
+    include: [
+      {
+        model: Student,
+        as: 'student',
+        attributes: ['id', 'name', 'gender'],
+      },
+      {
+        model: Class,
+        as: 'class',
+        attributes: ['id', 'cohort', 'className'],
+      },
+    ],
+  });
+};
+
+const getClassIdsForGrade = async (gradeLevel: number, academicYear: string) => {
+  const classes = await Class.findAll();
+  return classes
+    .filter(cls => calculateGradeLevel(cls.cohort, academicYear) === gradeLevel)
+    .map(cls => cls.id);
+};
+
+const getClassIdsForCohort = async (cohort: string) => {
+  const classes = await Class.findAll({ where: { cohort } });
+  return classes.map(cls => cls.id);
+};
+
+const getClassIdsForGradeScope = async (options: { gradeLevel?: number; cohort?: string }, academicYear: string) => {
+  if (options.cohort) return getClassIdsForCohort(options.cohort);
+  if (options.gradeLevel) return getClassIdsForGrade(options.gradeLevel, academicYear);
+  return [];
+};
+
+const countStudentsForClasses = async (classIds: number[], academicYear: string) => {
+  if (classIds.length === 0) return 0;
+
+  return StudentClassRelation.count({
+    where: {
+      classId: { [Op.in]: classIds },
+      academicYear,
+      isActive: true,
+    },
+  });
+};
+
+const buildClassSummaries = async (classes: any[], records: any[], academicYear: string, items: any[] = []) => {
+  const summaries = [];
+
+  for (const classInfo of classes) {
+    const classRecords = records.filter(record => Number(record.classId) === Number(classInfo.id));
+    const totalStudents = await StudentClassRelation.count({
+      where: {
+        classId: classInfo.id,
+        academicYear,
+        isActive: true,
+      },
+    });
+    const submittedCount = Math.min(getUniqueStudentCount(classRecords), totalStudents);
+    const passCount = classRecords.filter(record => toNumber(record.totalScore) >= 60).length;
+    const excellentCount = classRecords.filter(record => toNumber(record.totalScore) >= 90).length;
+    const itemSummaries = buildItemSummaries(items, classRecords);
+
+    summaries.push({
+      classId: classInfo.id,
+      className: formatHighSchoolClassName(classInfo.cohort, classInfo.className),
+      cohort: classInfo.cohort,
+      totalStudents,
+      submittedCount,
+      submissionRate: toPercent(submittedCount, totalStudents),
+      unsubmittedCount: Math.max(totalStudents - submittedCount, 0),
+      averageScore: getRecordsAverage(classRecords),
+      passRate: toPercent(passCount, classRecords.length),
+      excellentRate: toPercent(excellentCount, classRecords.length),
+      gradeDistribution: buildGradeDistribution(classRecords),
+      weakItems: itemSummaries
+        .filter(item => item.sampleCount > 0)
+        .sort((a, b) => a.passRate - b.passRate || a.averageScore - b.averageScore)
+        .slice(0, 3),
+    });
+  }
+
+  return summaries.sort((a, b) => b.averageScore - a.averageScore);
+};
+
+const buildTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { gradeLevel?: number; cohort?: string; classId?: number } = {}) => {
+  const forms = await PhysicalTestForm.findAll({
+    order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
+  });
+  const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
+
+  if (scope === 'class' && options.classId) {
+    const data = [];
+    for (const form of forms) {
+      const records = await PhysicalTestRecord.findAll({ where: { formId: form.id, classId: options.classId } });
+      data.push(getRecordsAverage(records));
+    }
+    return { labels, series: [{ name: '当前班级', data }] };
+  }
+
+  if (scope === 'grade' && (options.cohort || options.gradeLevel)) {
+    const data = [];
+    for (const form of forms) {
+      const classIds = await getClassIdsForGradeScope(options, form.academicYear);
+      const records = classIds.length > 0
+        ? await PhysicalTestRecord.findAll({ where: { formId: form.id, classId: { [Op.in]: classIds } } })
+        : [];
+      data.push(getRecordsAverage(records));
+    }
+    const name = options.cohort
+      ? formatHighSchoolGradeName(options.cohort)
+      : formatHighSchoolGradeName(getCohortFromGradeLevel(options.gradeLevel || 0, forms[0]?.academicYear));
+    return { labels, series: [{ name, data }] };
+  }
+
+  const allData = [];
+  const cohortData = new Map<string, number[]>();
+  const allCohorts = new Set<string>();
+  forms.forEach(form => (form.participatingCohorts || []).forEach((cohort: string) => allCohorts.add(cohort)));
+
+  for (const form of forms) {
+    const records = await fetchRecords({ formId: form.id });
+    allData.push(getRecordsAverage(records));
+
+    const formCohorts = new Map<string, any[]>();
+    records.forEach(record => {
+      if (!record.class?.cohort) return;
+      const cohort = String(record.class.cohort);
+      allCohorts.add(cohort);
+      if (!formCohorts.has(cohort)) formCohorts.set(cohort, []);
+      formCohorts.get(cohort).push(record);
+    });
+
+    Array.from(allCohorts).forEach(cohort => {
+      if (!cohortData.has(cohort)) cohortData.set(cohort, []);
+      cohortData.get(cohort).push(getRecordsAverage(formCohorts.get(cohort) || []));
+    });
+  }
+
+  return {
+    labels,
+    series: [
+      { name: '全校平均', data: allData },
+      ...Array.from(cohortData.entries())
+        .sort(([a], [b]) => Number(b) - Number(a))
+        .map(([cohort, data]) => ({ name: formatHighSchoolGradeName(cohort), data })),
+    ],
+  };
+};
+const getScopedRecordsAndTotal = async (form: any, scope: 'school' | 'grade' | 'class', options: { gradeLevel?: number; cohort?: string; classId?: number } = {}) => {
+  if (scope === 'class' && options.classId) {
+    const records = await fetchRecords({ formId: form.id, classId: options.classId });
+    const totalStudents = await StudentClassRelation.count({
+      where: { classId: options.classId, academicYear: form.academicYear, isActive: true },
+    });
+    return { records, totalStudents };
+  }
+
+  if (scope === 'grade' && (options.gradeLevel || options.cohort)) {
+    const classIds = await getClassIdsForGradeScope(options, form.academicYear);
+    const records = classIds.length > 0
+      ? await fetchRecords({ formId: form.id, classId: { [Op.in]: classIds } })
+      : [];
+    const totalStudents = await countStudentsForClasses(classIds, form.academicYear);
+    return { records, totalStudents };
+  }
+
+  const allClasses = await Class.findAll();
+  const participatingClasses = allClasses.filter(cls => {
+    return form.participatingCohorts && form.participatingCohorts.includes(cls.cohort);
+  });
+  const classIds = participatingClasses.map(item => item.id);
+  const records = classIds.length > 0
+    ? await fetchRecords({ formId: form.id, classId: { [Op.in]: classIds } })
+    : [];
+  const totalStudents = await countStudentsForClasses(classIds, form.academicYear);
+  return { records, totalStudents };
+};
+
+const buildRadarSeriesForScope = async (
+  form: any,
+  items: any[],
+  records: any[],
+  scope: 'school' | 'grade' | 'class',
+  options: { gradeLevel?: number; cohort?: string; classId?: number } = {},
+) => {
+  const radar = buildRadarSeries(items, records);
+  radar.series[0].name = scope === 'class' ? '当前班级' : scope === 'grade' ? (options.cohort ? formatHighSchoolGradeName(options.cohort) : '当前入学级') : '全校平均';
+
+  const buildData = (sourceRecords: any[]) => items.map(item => {
+    const itemScores = sourceRecords
+      .map(record => getRecordItemScore(record, item.itemCode))
+      .filter((score): score is number => score !== null);
+    return itemScores.length > 0
+      ? round(itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length)
+      : 0;
+  });
+
+  if (scope === 'school') {
+    const cohortRecords = new Map<string, any[]>();
+    records.forEach(record => {
+      if (!record.class?.cohort) return;
+      const cohort = String(record.class.cohort);
+      if (!cohortRecords.has(cohort)) cohortRecords.set(cohort, []);
+      cohortRecords.get(cohort).push(record);
+    });
+
+    Array.from(cohortRecords.entries())
+      .sort(([a], [b]) => Number(b) - Number(a))
+      .forEach(([cohort, sourceRecords]) => {
+        radar.series.push({ name: `${formatHighSchoolGradeName(cohort)}平均`, data: buildData(sourceRecords) });
+      });
+  } else if (scope === 'class' && options.cohort) {
+    const gradeScoped = await getScopedRecordsAndTotal(form, 'grade', { cohort: options.cohort });
+    if (gradeScoped.records.length > 0) {
+      radar.series.push({ name: `${formatHighSchoolGradeName(options.cohort)}平均`, data: buildData(gradeScoped.records) });
+    }
+  }
+
+  return radar;
+};
+const buildRateTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { gradeLevel?: number; cohort?: string; classId?: number } = {}) => {
+  const forms = await PhysicalTestForm.findAll({
+    order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
+  });
+  const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
+  const averageScore: number[] = [];
+  const passRate: number[] = [];
+  const excellentRate: number[] = [];
+  const submissionRate: number[] = [];
+
+  for (const form of forms) {
+    const scoped = await getScopedRecordsAndTotal(form, scope, options);
+    const metrics = getScoreMetrics(scoped.records, scoped.totalStudents);
+    averageScore.push(metrics.averageScore);
+    passRate.push(metrics.passRate);
+    excellentRate.push(metrics.excellentRate);
+    submissionRate.push(round(metrics.submissionRate * 100));
+  }
+
+  return {
+    labels,
+    series: [
+      { name: '平均分', data: averageScore },
+      { name: '及格率', data: passRate },
+      { name: '优秀率', data: excellentRate },
+      { name: '提交率', data: submissionRate },
+    ],
+  };
+};
+
+const buildItemTrendSeries = async (items: any[], scope: 'school' | 'grade' | 'class', options: { gradeLevel?: number; cohort?: string; classId?: number } = {}) => {
+  const forms = await PhysicalTestForm.findAll({
+    order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
+  });
+  const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
+  const series = [];
+
+  for (const item of items) {
+    const data = [];
+    for (const form of forms) {
+      const scoped = await getScopedRecordsAndTotal(form, scope, options);
+      const itemScores = scoped.records
+        .map(record => getRecordItemScore(record, item.itemCode))
+        .filter((score): score is number => score !== null);
+      data.push(itemScores.length > 0
+        ? round(itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length)
+        : 0);
+    }
+    series.push({ name: item.itemName, itemCode: item.itemCode, data });
+  }
+
+  return { labels, series };
+};
+
+const buildClassItemHeatmap = (items: any[], records: any[], classSummaries: any[]) => {
+  return {
+    columns: items.map(item => ({ itemCode: item.itemCode, itemName: item.itemName })),
+    rows: classSummaries.map(classInfo => {
+      const classRecords = records.filter(record => Number(record.classId) === Number(classInfo.classId));
+      return {
+        classId: classInfo.classId,
+        className: classInfo.className,
+        values: items.map(item => {
+          const itemScores = classRecords
+            .map(record => getRecordItemScore(record, item.itemCode))
+            .filter((score): score is number => score !== null);
+          return itemScores.length > 0
+            ? round(itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length)
+            : null;
+        }),
+      };
+    }),
+  };
+};
+
+const buildGradeSummaries = async (classes: any[], records: any[], academicYear: string) => {
+  const cohortMap = new Map<string, { classes: any[]; records: any[] }>();
+
+  classes.forEach(classInfo => {
+    const cohort = String(classInfo.cohort || '');
+    if (!cohort) return;
+    if (!cohortMap.has(cohort)) cohortMap.set(cohort, { classes: [], records: [] });
+    cohortMap.get(cohort).classes.push(classInfo);
+  });
+
+  records.forEach(record => {
+    const cohort = String(record.class?.cohort || '');
+    if (!cohort) return;
+    if (!cohortMap.has(cohort)) cohortMap.set(cohort, { classes: [], records: [] });
+    cohortMap.get(cohort).records.push(record);
+  });
+
+  const summaries = [];
+  for (const [cohort, group] of cohortMap.entries()) {
+    const classIds = group.classes.map(item => item.id);
+    const totalStudents = await countStudentsForClasses(classIds, academicYear);
+    const metrics = getScoreMetrics(group.records, totalStudents);
+    summaries.push({
+      cohort,
+      gradeName: formatHighSchoolGradeName(cohort),
+      totalClasses: group.classes.length,
+      totalStudents,
+      submittedCount: metrics.submittedCount,
+      submissionRate: round(metrics.submissionRate * 100),
+      averageScore: metrics.averageScore,
+      passRate: metrics.passRate,
+      excellentRate: metrics.excellentRate,
+      gradeDistribution: buildGradeDistribution(group.records),
+    });
+  }
+
+  return summaries.sort((a, b) => Number(b.cohort) - Number(a.cohort));
+};
+const buildComparison = async (
+  form: any,
+  scope: 'school' | 'grade' | 'class',
+  options: { gradeLevel?: number; cohort?: string; classId?: number } = {},
+  currentMetrics: any,
+) => {
+  const forms = await PhysicalTestForm.findAll({
+    order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
+  });
+  const currentIndex = forms.findIndex(item => Number(item.id) === Number(form.id));
+  const previousForm = currentIndex > 0 ? forms[currentIndex - 1] : null;
+  if (!previousForm) return null;
+
+  const previousScoped = await getScopedRecordsAndTotal(previousForm, scope, options);
+  const previousMetrics = getScoreMetrics(previousScoped.records, previousScoped.totalStudents);
+
+  return {
+    previousFormId: previousForm.id,
+    previousFormName: previousForm.formName,
+    previousTestDate: previousForm.testDate,
+    averageScoreDelta: round(currentMetrics.averageScore - previousMetrics.averageScore),
+    passRateDelta: round(currentMetrics.passRate - previousMetrics.passRate),
+    excellentRateDelta: round(currentMetrics.excellentRate - previousMetrics.excellentRate),
+    submissionRateDelta: round((currentMetrics.submissionRate - previousMetrics.submissionRate) * 100),
+  };
+};
+const buildSummary = async ({
+  form,
+  records,
+  totalStudents,
+  classSummaries = [],
+  gradeSummaries = [],
+  trendScope,
+  trendOptions = {},
+}: {
+  form: any;
+  records: any[];
+  totalStudents: number;
+  classSummaries?: any[];
+  gradeSummaries?: any[];
+  trendScope: 'school' | 'grade' | 'class';
+  trendOptions?: any;
+}) => {
+  const items = await getAnalysisItemsForForm(form.id);
+  const metrics = getScoreMetrics(records, totalStudents);
+  const itemSummaries = buildItemSummaries(items, records);
+
+  return {
+    totalStudents,
+    submittedCount: metrics.submittedCount,
+    submissionRate: metrics.submissionRate,
+    averageScore: metrics.averageScore,
+    gradeDistribution: buildGradeDistribution(records),
+    scoreDistribution: buildGradeDistribution(records),
+    classSummaries,
+    gradeSummaries,
+    itemSummaries,
+    genderSummaries: buildGenderSummaries(records),
+    radarSeries: await buildRadarSeriesForScope(form, items, records, trendScope, trendOptions),
+    trendSeries: await buildTrendSeries(trendScope, trendOptions),
+    trendMetricSeries: await buildRateTrendSeries(trendScope, trendOptions),
+    itemTrendSeries: await buildItemTrendSeries(items, trendScope, trendOptions),
+    classItemHeatmap: buildClassItemHeatmap(items, records, classSummaries),
+    comparison: await buildComparison(form, trendScope, trendOptions, metrics),
+    riskSummary: buildRiskSummary(itemSummaries, classSummaries, metrics.averageScore),
+    weaknesses: buildWeaknesses(itemSummaries, classSummaries),
+  };
+};
+
 export const getOverallStats = async (req: Request, res: Response) => {
   try {
     const { academicYear } = req.query;
-
-    // 统计学生总数
     const totalStudents = await Student.count();
-
-    // 统计班级总数
     const totalClasses = await Class.count();
-
-    // 统计体测表单数
     const totalForms = await PhysicalTestForm.count();
-
-    // 统计测试记录数
     const totalRecords = await PhysicalTestRecord.count();
 
-    // 如果指定了学年，统计该学年的数据
     let yearStats = null;
     if (academicYear) {
-      const yearForms = await PhysicalTestForm.count({
-        where: { academicYear: academicYear as string }
-      });
-
-      const yearFormIds = await PhysicalTestForm.findAll({
+      const yearForms = await PhysicalTestForm.findAll({
         where: { academicYear: academicYear as string },
-        attributes: ['id']
+        attributes: ['id'],
       });
-
-      const yearRecords = await PhysicalTestRecord.count({
-        where: {
-          formId: {
-            [Op.in]: yearFormIds.map(f => f.id)
-          }
-        }
-      });
-
       yearStats = {
-        forms: yearForms,
-        records: yearRecords
+        forms: yearForms.length,
+        records: await PhysicalTestRecord.count({
+          where: { formId: { [Op.in]: yearForms.map(form => form.id) } },
+        }),
       };
     }
 
-    res.json({
-      success: true,
-      data: {
-        totalStudents,
-        totalClasses,
-        totalForms,
-        totalRecords,
-        yearStats
-      }
-    });
+    res.json({ success: true, data: { totalStudents, totalClasses, totalForms, totalRecords, yearStats } });
   } catch (error: any) {
     console.error('获取整体统计失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取统计数据失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取统计数据失败', error: error.message });
   }
 };
 
-/**
- * 获取班级统计数据
- */
 export const getClassStats = async (req: Request, res: Response) => {
   try {
     const { formId, classId } = req.params;
-
-    // 获取表单信息
     const form = await PhysicalTestForm.findByPk(formId);
-    if (!form) {
-      return res.status(404).json({
-        success: false,
-        message: '表单不存在'
-      });
-    }
+    if (!form) return res.status(404).json({ success: false, message: '表单不存在' });
 
-    // 获取班级信息
     const classInfo = await Class.findByPk(classId);
+    if (!classInfo) return res.status(404).json({ success: false, message: '班级不存在' });
 
-    if (!classInfo) {
-      return res.status(404).json({
-        success: false,
-        message: '班级不存在'
-      });
-    }
-
-    // 获取该班级在该学年的学生总数
+    const records = await fetchRecords({ formId, classId });
+    const items = await getAnalysisItemsForForm(form.id);
     const totalStudents = await StudentClassRelation.count({
-      where: {
-        classId,
-        academicYear: form.academicYear,
-        isActive: true
-      }
+      where: { classId, academicYear: form.academicYear, isActive: true },
+    });
+    const classSummaries = await buildClassSummaries([classInfo], records, form.academicYear, items);
+    const gradeSummaries = await buildGradeSummaries([classInfo], records, form.academicYear);
+    const summary = await buildSummary({
+      form,
+      records,
+      totalStudents,
+      classSummaries,
+      gradeSummaries,
+      trendScope: 'class',
+      trendOptions: { classId: Number(classId), cohort: classInfo.cohort },
     });
 
-    // 获取已完成测试的学生数
-    const completedStudents = await PhysicalTestRecord.count({
-      where: {
-        formId,
-        classId
-      }
-    });
-
-    // 获取所有记录及分数
-    const records = await PhysicalTestRecord.findAll({
-      where: {
-        formId,
-        classId
-      },
-      include: [
-        {
-          model: Student,
-          as: 'student',
-          attributes: ['id', 'name', 'gender']
-        }
-      ]
-    });
-
-    // 计算平均分
-    const totalScore = records.reduce((sum, record) => {
-      return sum + (Number(record.totalScore) || 0);
-    }, 0);
-    const avgScore = completedStudents > 0 ? totalScore / completedStudents : 0;
-
-    // 统计分数分布
-    const scoreDistribution = {
-      excellent: 0, // >= 90
-      good: 0,      // 80-89
-      pass: 0,      // 60-79
-      fail: 0       // < 60
-    };
-
-    records.forEach(record => {
-      const score = Number(record.totalScore) || 0;
-      if (score >= 90) scoreDistribution.excellent++;
-      else if (score >= 80) scoreDistribution.good++;
-      else if (score >= 60) scoreDistribution.pass++;
-      else scoreDistribution.fail++;
-    });
-
-    // 按性别统计
-    const maleRecords = records.filter(r => r.student?.gender === 'male');
-    const femaleRecords = records.filter(r => r.student?.gender === 'female');
-
-    const maleAvg = maleRecords.length > 0
-      ? maleRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0) / maleRecords.length
-      : 0;
-
-    const femaleAvg = femaleRecords.length > 0
-      ? femaleRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0) / femaleRecords.length
-      : 0;
-
-    // 获取表单的测试项目，用于计算项目统计
-    const testItems = await FormTestItem.findAll({
-      where: { formId },
-      order: [['sortOrder', 'ASC']]
-    });
-
-    // 各项目平均成绩
-    const itemSummaries: any[] = [];
-    for (const item of testItems) {
-      const itemScores: number[] = [];
-
-      records.forEach(record => {
-        const scores = record.scores as Record<string, any>;
-        if (scores && scores[item.itemCode] != null) {
-          itemScores.push(Number(scores[item.itemCode]));
-        }
-      });
-
-      const itemAvg = itemScores.length > 0
-        ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
-        : 0;
-
-      // 计算及格率（假设60分及格）
-      const passCount = itemScores.filter(s => s >= 60).length;
-      const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
-
-      const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
-      const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
-
-      itemSummaries.push({
-        itemCode: item.itemCode,
-        itemName: item.itemName,
-        averageScore: Number(itemAvg.toFixed(2)),
-        passRate: Number(passRate.toFixed(2)),
-        maxValue: Number(maxValue.toFixed(2)),
-        minValue: Number(minValue.toFixed(2))
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        totalStudents,
-        submittedCount: completedStudents,
-        submissionRate: totalStudents > 0 ? Number((completedStudents / totalStudents).toFixed(4)) : 0,
-        averageScore: Number(avgScore.toFixed(2)),
-        gradeDistribution: scoreDistribution,
-        itemSummaries
-      }
-    });
+    res.json({ success: true, data: summary });
   } catch (error: any) {
     console.error('获取班级统计失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取统计数据失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取统计数据失败', error: error.message });
   }
 };
 
-/**
- * 获取年级统计数据（基于gradeLevel动态计算）
- */
 export const getGradeStats = async (req: Request, res: Response) => {
   try {
-    const { formId, gradeLevel } = req.params;
-
-    // 获取表单信息
+    const { formId } = req.params;
+    const gradeLevel = req.params.gradeLevel || req.params.gradeId;
     const form = await PhysicalTestForm.findByPk(formId);
-    if (!form) {
-      return res.status(404).json({
-        success: false,
-        message: '表单不存在'
-      });
-    }
+    if (!form) return res.status(404).json({ success: false, message: '表单不存在' });
 
-    // 获取所有班级
+    const gradeParam = String(gradeLevel || '');
+    const targetCohort = /^\d{4}$/.test(gradeParam) ? gradeParam : '';
+    const targetGradeLevel = targetCohort ? undefined : parseInt(gradeParam);
     const allClasses = await Class.findAll();
-
-    // 根据gradeLevel筛选出当前学年对应年级的班级
-    const targetGradeLevel = parseInt(gradeLevel as string);
     const filteredClasses = allClasses.filter(cls => {
-      const level = calculateGradeLevel(cls.cohort, form.academicYear);
-      return level === targetGradeLevel;
+      if (targetCohort) return String(cls.cohort) === targetCohort;
+      return calculateGradeLevel(cls.cohort, form.academicYear) === targetGradeLevel;
     });
-
+    const gradeName = targetCohort
+      ? formatHighSchoolGradeName(targetCohort)
+      : formatHighSchoolGradeName(getCohortFromGradeLevel(targetGradeLevel || 0, form.academicYear));
     if (filteredClasses.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `${form.academicYear}学年没有找到${targetGradeLevel}年级的班级`
-      });
+      return res.status(404).json({ success: false, message: `${form.academicYear}学年没有找到${gradeName}的班级` });
     }
 
-    const classIds = filteredClasses.map(c => c.id);
-
-    // 统计各班级的数据
-    const classStats = [];
-    for (const classInfo of filteredClasses) {
-      const totalStudents = await StudentClassRelation.count({
-        where: {
-          classId: classInfo.id,
-          academicYear: form.academicYear,
-          isActive: true
-        }
-      });
-
-      const records = await PhysicalTestRecord.findAll({
-        where: {
-          formId,
-          classId: classInfo.id
-        }
-      });
-
-      const completedStudents = records.length;
-      const totalScore = records.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
-      const avgScore = completedStudents > 0 ? totalScore / completedStudents : 0;
-
-      classStats.push({
-        classId: classInfo.id,
-        cohort: classInfo.cohort,
-        className: classInfo.className,
-        totalStudents,
-        completedStudents,
-        avgScore: avgScore.toFixed(2)
-      });
-    }
-
-    // 年级整体统计
-    const allRecords = await PhysicalTestRecord.findAll({
-      where: {
-        formId,
-        classId: {
-          [Op.in]: classIds
-        }
-      }
+    const classIds = filteredClasses.map(item => item.id);
+    const records = await fetchRecords({ formId, classId: { [Op.in]: classIds } });
+    const items = await getAnalysisItemsForForm(form.id);
+    const totalStudents = await countStudentsForClasses(classIds, form.academicYear);
+    const classSummaries = await buildClassSummaries(filteredClasses, records, form.academicYear, items);
+    const gradeSummaries = await buildGradeSummaries(filteredClasses, records, form.academicYear);
+    const summary = await buildSummary({
+      form,
+      records,
+      totalStudents,
+      classSummaries,
+      gradeSummaries,
+      trendScope: 'grade',
+      trendOptions: { gradeLevel: targetGradeLevel, cohort: targetCohort },
     });
 
-    const totalScore = allRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
-    const avgScore = allRecords.length > 0 ? totalScore / allRecords.length : 0;
-
-    // 计算年级学生总数
-    const totalStudents = await StudentClassRelation.count({
-      where: {
-        classId: {
-          [Op.in]: classIds
-        },
-        academicYear: form.academicYear,
-        isActive: true
-      }
-    });
-
-    // 分数分布
-    const scoreDistribution = {
-      excellent: 0,
-      good: 0,
-      pass: 0,
-      fail: 0
-    };
-
-    allRecords.forEach(record => {
-      const score = Number(record.totalScore) || 0;
-      if (score >= 90) scoreDistribution.excellent++;
-      else if (score >= 80) scoreDistribution.good++;
-      else if (score >= 60) scoreDistribution.pass++;
-      else scoreDistribution.fail++;
-    });
-
-    // 获取测试项目
-    const testItems = await FormTestItem.findAll({
-      where: { formId },
-      order: [['sortOrder', 'ASC']]
-    });
-
-    // 各项目平均成绩
-    const itemSummaries: any[] = [];
-    for (const item of testItems) {
-      const itemScores: number[] = [];
-
-      allRecords.forEach(record => {
-        const scores = record.scores as Record<string, any>;
-        if (scores && scores[item.itemCode] != null) {
-          itemScores.push(Number(scores[item.itemCode]));
-        }
-      });
-
-      const itemAvg = itemScores.length > 0
-        ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
-        : 0;
-
-      const passCount = itemScores.filter(s => s >= 60).length;
-      const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
-
-      const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
-      const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
-
-      itemSummaries.push({
-        itemCode: item.itemCode,
-        itemName: item.itemName,
-        averageScore: Number(itemAvg.toFixed(2)),
-        passRate: Number(passRate.toFixed(2)),
-        maxValue: Number(maxValue.toFixed(2)),
-        minValue: Number(minValue.toFixed(2))
-      });
-    }
-
-    // 转换班级统计格式
-    const classSummaries = classStats.map(cls => ({
-      classId: cls.classId,
-      className: `${cls.cohort} ${cls.className}`,
-      totalStudents: cls.totalStudents,
-      submittedCount: cls.completedStudents,
-      averageScore: Number(cls.avgScore),
-      passRate: 0, // 需要计算
-      excellentRate: 0 // 需要计算
-    }));
-
-    res.json({
-      success: true,
-      data: {
-        totalStudents,
-        submittedCount: allRecords.length,
-        submissionRate: totalStudents > 0 ? Number((allRecords.length / totalStudents).toFixed(4)) : 0,
-        averageScore: Number(avgScore.toFixed(2)),
-        gradeDistribution: scoreDistribution,
-        classSummaries,
-        itemSummaries
-      }
-    });
+    res.json({ success: true, data: summary });
   } catch (error: any) {
-    console.error('获取年级统计失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取统计数据失败',
-      error: error.message
-    });
+    console.error('获取级部统计失败:', error);
+    res.status(500).json({ success: false, message: '获取统计数据失败', error: error.message });
   }
 };
 
-/**
- * 获取表单统计数据（全校）
- */
 export const getFormStats = async (req: Request, res: Response) => {
   try {
     const { formId } = req.params;
+    const form = await PhysicalTestForm.findByPk(formId);
+    if (!form) return res.status(404).json({ success: false, message: '表单不存在' });
 
-    // 获取表单信息
-    const form = await PhysicalTestForm.findByPk(formId, {
-      include: [
-        {
-          model: FormTestItem,
-          as: 'items',
-          order: [['sortOrder', 'ASC']]
-        }
-      ]
-    });
-
-    if (!form) {
-      return res.status(404).json({
-        success: false,
-        message: '表单不存在'
-      });
-    }
-
-    // 获取所有测试记录
-    const records = await PhysicalTestRecord.findAll({
-      where: { formId },
-      include: [
-        {
-          model: Student,
-          as: 'student',
-          attributes: ['id', 'gender']
-        },
-        {
-          model: Class,
-          as: 'class',
-          attributes: ['id', 'cohort', 'className']
-        }
-      ]
-    });
-
-    // 整体统计
-    const totalScore = records.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
-    const avgScore = records.length > 0 ? totalScore / records.length : 0;
-
-    // 分数分布
-    const scoreDistribution = {
-      excellent: 0,
-      good: 0,
-      pass: 0,
-      fail: 0
-    };
-
-    records.forEach(record => {
-      const score = Number(record.totalScore) || 0;
-      if (score >= 90) scoreDistribution.excellent++;
-      else if (score >= 80) scoreDistribution.good++;
-      else if (score >= 60) scoreDistribution.pass++;
-      else scoreDistribution.fail++;
-    });
-
-    // 按年级统计（基于动态计算的gradeLevel）
-    const gradeStatsMap = new Map();
-    records.forEach(record => {
-      if (!record.class) return;
-
-      const gradeLevel = calculateGradeLevel(record.class.cohort, form.academicYear);
-      if (!gradeLevel) return;
-
-      if (!gradeStatsMap.has(gradeLevel)) {
-        gradeStatsMap.set(gradeLevel, {
-          gradeLevel,
-          gradeName: `${gradeLevel}年级`,
-          count: 0,
-          totalScore: 0
-        });
-      }
-
-      const stats = gradeStatsMap.get(gradeLevel);
-      stats.count++;
-      stats.totalScore += Number(record.totalScore) || 0;
-    });
-
-    const gradeStats = Array.from(gradeStatsMap.values()).map(stats => ({
-      gradeLevel: stats.gradeLevel,
-      gradeName: stats.gradeName,
-      count: stats.count,
-      avgScore: (stats.totalScore / stats.count).toFixed(2)
-    }));
-
-    // 各项目平均成绩
-    const itemStats: any[] = [];
-    if (form.items) {
-      for (const item of form.items) {
-        const itemScores: number[] = [];
-
-        records.forEach(record => {
-          const scores = record.scores as Record<string, any>;
-          if (scores && scores[item.itemCode] != null) {
-            itemScores.push(Number(scores[item.itemCode]));
-          }
-        });
-
-        const itemAvg = itemScores.length > 0
-          ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
-          : 0;
-
-        itemStats.push({
-          itemCode: item.itemCode,
-          itemName: item.itemName,
-          itemUnit: item.itemUnit,
-          avgScore: itemAvg.toFixed(2),
-          count: itemScores.length
-        });
-      }
-    }
-
-    // 获取应该参与测试的学生总数
     const allClasses = await Class.findAll();
     const participatingClasses = allClasses.filter(cls => {
       return form.participatingCohorts && form.participatingCohorts.includes(cls.cohort);
     });
-    const participatingClassIds = participatingClasses.map(c => c.id);
-
-    const totalStudents = await StudentClassRelation.count({
-      where: {
-        classId: {
-          [Op.in]: participatingClassIds
-        },
-        academicYear: form.academicYear,
-        isActive: true
-      }
+    const classIds = participatingClasses.map(item => item.id);
+    const records = await fetchRecords({ formId, classId: { [Op.in]: classIds } });
+    const items = await getAnalysisItemsForForm(form.id);
+    const totalStudents = await countStudentsForClasses(classIds, form.academicYear);
+    const classSummaries = await buildClassSummaries(participatingClasses, records, form.academicYear, items);
+    const gradeSummaries = await buildGradeSummaries(participatingClasses, records, form.academicYear);
+    const summary = await buildSummary({
+      form,
+      records,
+      totalStudents,
+      classSummaries,
+      gradeSummaries,
+      trendScope: 'school',
     });
 
-    // 按班级统计
-    const classSummaries: any[] = [];
-    for (const classInfo of participatingClasses) {
-      const classRecords = records.filter(r => r.classId === classInfo.id);
-
-      const classStudentCount = await StudentClassRelation.count({
-        where: {
-          classId: classInfo.id,
-          academicYear: form.academicYear,
-          isActive: true
-        }
-      });
-
-      const classTotal = classRecords.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
-      const classAvg = classRecords.length > 0 ? classTotal / classRecords.length : 0;
-
-      const passCount = classRecords.filter(r => Number(r.totalScore) >= 60).length;
-      const excellentCount = classRecords.filter(r => Number(r.totalScore) >= 90).length;
-
-      classSummaries.push({
-        classId: classInfo.id,
-        className: `${classInfo.cohort} ${classInfo.className}`,
-        totalStudents: classStudentCount,
-        submittedCount: classRecords.length,
-        averageScore: Number(classAvg.toFixed(2)),
-        passRate: Number((classRecords.length > 0 ? (passCount / classRecords.length * 100) : 0).toFixed(2)),
-        excellentRate: Number((classRecords.length > 0 ? (excellentCount / classRecords.length * 100) : 0).toFixed(2))
-      });
-    }
-
-    // 各项目平均成绩
-    const itemSummaries: any[] = [];
-    if (form.items) {
-      for (const item of form.items) {
-        const itemScores: number[] = [];
-
-        records.forEach(record => {
-          const scores = record.scores as Record<string, any>;
-          if (scores && scores[item.itemCode] != null) {
-            itemScores.push(Number(scores[item.itemCode]));
-          }
-        });
-
-        const itemAvg = itemScores.length > 0
-          ? itemScores.reduce((sum, s) => sum + s, 0) / itemScores.length
-          : 0;
-
-        // 计算及格率（假设60分及格）
-        const passCount = itemScores.filter(s => s >= 60).length;
-        const passRate = itemScores.length > 0 ? (passCount / itemScores.length * 100) : 0;
-
-        const maxValue = itemScores.length > 0 ? Math.max(...itemScores) : 0;
-        const minValue = itemScores.length > 0 ? Math.min(...itemScores) : 0;
-
-        itemSummaries.push({
-          itemCode: item.itemCode,
-          itemName: item.itemName,
-          averageScore: Number(itemAvg.toFixed(2)),
-          passRate: Number(passRate.toFixed(2)),
-          maxValue: Number(maxValue.toFixed(2)),
-          minValue: Number(minValue.toFixed(2))
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      data: {
-        totalStudents,
-        submittedCount: records.length,
-        submissionRate: totalStudents > 0 ? Number((records.length / totalStudents).toFixed(4)) : 0,
-        averageScore: Number(avgScore.toFixed(2)),
-        gradeDistribution: scoreDistribution,
-        classSummaries,
-        itemSummaries
-      }
-    });
+    res.json({ success: true, data: summary });
   } catch (error: any) {
     console.error('获取表单统计失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取统计数据失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取统计数据失败', error: error.message });
   }
 };
 
-/**
- * 获取历史趋势数据
- */
 export const getTrendData = async (req: Request, res: Response) => {
   try {
-    const { classId, cohort, gradeLevel } = req.query;
+    const { classId, gradeLevel } = req.query;
+    const gradeParam = String(gradeLevel || '');
+    const trend = classId
+      ? await buildTrendSeries('class', { classId: Number(classId) })
+      : gradeLevel
+        ? await buildTrendSeries('grade', /^\d{4}$/.test(gradeParam) ? { cohort: gradeParam } : { gradeLevel: Number(gradeLevel) })
+        : await buildTrendSeries('school');
 
-    // 获取所有已发布的表单
-    const forms = await PhysicalTestForm.findAll({
-      where: { status: 'published' },
-      order: [['academicYear', 'ASC'], ['testDate', 'ASC']]
-    });
-
-    const trendData = [];
-
-    for (const form of forms) {
-      let whereClause: any = { formId: form.id };
-
-      if (classId) {
-        // 按班级ID筛选
-        whereClause.classId = classId;
-      } else if (cohort) {
-        // 按cohort筛选班级
-        const classes = await Class.findAll({
-          where: { cohort: cohort as string },
-          attributes: ['id']
-        });
-        whereClause.classId = {
-          [Op.in]: classes.map(c => c.id)
-        };
-      } else if (gradeLevel) {
-        // 按gradeLevel筛选班级（需要动态计算）
-        const allClasses = await Class.findAll();
-        const targetLevel = parseInt(gradeLevel as string);
-        const filteredClasses = allClasses.filter(cls => {
-          const level = calculateGradeLevel(cls.cohort, form.academicYear);
-          return level === targetLevel;
-        });
-        whereClause.classId = {
-          [Op.in]: filteredClasses.map(c => c.id)
-        };
-      }
-
-      const records = await PhysicalTestRecord.findAll({
-        where: whereClause
-      });
-
-      const totalScore = records.reduce((sum, r) => sum + (Number(r.totalScore) || 0), 0);
-      const avgScore = records.length > 0 ? totalScore / records.length : 0;
-
-      trendData.push({
-        formId: form.id,
-        formName: form.formName,
-        academicYear: form.academicYear,
-        testDate: form.testDate,
-        count: records.length,
-        avgScore: avgScore.toFixed(2)
-      });
-    }
-
-    res.json({
-      success: true,
-      data: trendData
-    });
+    res.json({ success: true, data: trend });
   } catch (error: any) {
     console.error('获取趋势数据失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取趋势数据失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取趋势数据失败', error: error.message });
   }
 };
 
-/**
- * 获取学生历史体测数据
- */
 export const getStudentHistory = async (req: Request, res: Response) => {
   try {
     const { studentId } = req.params;
-
-    // 检查学生是否存在
     const student = await Student.findByPk(studentId);
     if (!student) {
-      res.status(404).json({
-        success: false,
-        message: '学生不存在'
-      });
+      res.status(404).json({ success: false, message: '学生不存在' });
       return;
     }
 
-    // 查询学生的所有体测记录
     const records = await PhysicalTestRecord.findAll({
       where: { studentId: parseInt(studentId) },
       include: [
-        {
-          model: PhysicalTestForm,
-          as: 'form',
-          attributes: ['id', 'formName', 'academicYear', 'testDate']
-        },
-        {
-          model: Class,
-          as: 'class',
-          attributes: ['id', 'cohort', 'className']
-        }
+        { model: PhysicalTestForm, as: 'form', attributes: ['id', 'formName', 'academicYear', 'testDate'] },
+        { model: Class, as: 'class', attributes: ['id', 'cohort', 'className'] },
       ],
-      order: [['created_at', 'ASC']]
+      order: [['created_at', 'ASC']],
     });
 
-    // 格式化数据
-    const history = records.map((record: any) => {
-      const recordData = record.toJSON();
-      return {
-        id: recordData.id,
-        formId: recordData.formId,
-        formName: recordData.form?.formName,
-        academicYear: recordData.form?.academicYear,
-        testDate: recordData.form?.testDate,
-        classId: recordData.classId,
-        cohort: recordData.class?.cohort,
-        className: recordData.class?.className,
-        testData: recordData.testData,
-        scores: recordData.scores,
-        totalScore: recordData.totalScore,
-        gradeLevel: recordData.gradeLevel,
-        submittedAt: recordData.submittedAt
-      };
-    });
+    const history = [];
+    for (const record of records as any[]) {
+      const data = record.toJSON();
+      const totalScore = toNumber(data.totalScore);
+      const classPeerRecords = await PhysicalTestRecord.findAll({
+        where: { formId: data.formId, classId: data.classId },
+        attributes: ['totalScore'],
+      });
+      const gradeLevel = data.class?.cohort && data.form?.academicYear
+        ? calculateGradeLevel(data.class.cohort, data.form.academicYear)
+        : null;
+      const gradeClassIds = gradeLevel
+        ? await getClassIdsForGrade(gradeLevel, data.form.academicYear)
+        : [];
+      const gradePeerRecords = gradeClassIds.length > 0
+        ? await PhysicalTestRecord.findAll({
+            where: { formId: data.formId, classId: { [Op.in]: gradeClassIds } },
+            attributes: ['totalScore'],
+          })
+        : [];
+
+      history.push({
+        id: data.id,
+        formId: data.formId,
+        formName: data.form?.formName,
+        academicYear: data.form?.academicYear,
+        testDate: data.form?.testDate,
+        classId: data.classId,
+        cohort: data.class?.cohort,
+        className: data.class?.className,
+        testData: data.testData,
+        scores: data.scores,
+        totalScore: data.totalScore,
+        gradeLevel: data.gradeLevel,
+        percentile: {
+          class: calculatePercentile(totalScore, classPeerRecords.map(peer => toNumber(peer.get('totalScore')))),
+          grade: calculatePercentile(totalScore, gradePeerRecords.map(peer => toNumber(peer.get('totalScore')))),
+        },
+        submittedAt: data.submittedAt,
+      });
+    }
 
     res.json({
       success: true,
@@ -765,96 +851,67 @@ export const getStudentHistory = async (req: Request, res: Response) => {
           studentIdSchool: student.get('studentIdSchool'),
           name: student.get('name'),
           gender: student.get('gender'),
-          birthDate: student.get('birthDate')
+          birthDate: student.get('birthDate'),
         },
-        history
-      }
+        history,
+      },
     });
   } catch (error: any) {
     console.error('获取学生历史数据失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取学生历史数据失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取学生历史数据失败', error: error.message });
   }
 };
 
-/**
- * 获取班级历史体测趋势
- */
 export const getClassHistory = async (req: Request, res: Response) => {
   try {
     const { classId } = req.params;
-
-    // 检查班级是否存在
     const classData = await Class.findByPk(classId);
-
     if (!classData) {
-      res.status(404).json({
-        success: false,
-        message: '班级不存在'
-      });
+      res.status(404).json({ success: false, message: '班级不存在' });
       return;
     }
 
-    // 查询该班级的所有体测记录，按表单分组
     const records = await PhysicalTestRecord.findAll({
       where: { classId: parseInt(classId) },
       include: [
-        {
-          model: PhysicalTestForm,
-          as: 'form',
-          attributes: ['id', 'formName', 'academicYear', 'testDate']
-        }
-      ]
+        { model: PhysicalTestForm, as: 'form', attributes: ['id', 'formName', 'academicYear', 'testDate'] },
+      ],
     });
 
-    // 按表单分组统计
     const formStats = new Map();
-
     for (const record of records) {
-      const recordData = record.toJSON() as any;
-      const formId = recordData.formId;
+      const data = record.toJSON() as any;
+      const formId = data.formId;
 
       if (!formStats.has(formId)) {
         formStats.set(formId, {
           formId,
-          formName: recordData.form?.formName,
-          academicYear: recordData.form?.academicYear,
-          testDate: recordData.form?.testDate,
-          totalCount: 0,
-          totalScore: 0,
-          passCount: 0,
-          excellentCount: 0,
-          scores: []
+          formName: data.form?.formName,
+          academicYear: data.form?.academicYear,
+          testDate: data.form?.testDate,
+          records: [],
         });
       }
 
-      const stats = formStats.get(formId);
-      stats.totalCount++;
-      stats.totalScore += Number(recordData.totalScore) || 0;
-      stats.scores.push(Number(recordData.totalScore) || 0);
-
-      if (Number(recordData.totalScore) >= 60) {
-        stats.passCount++;
-      }
-      if (Number(recordData.totalScore) >= 90) {
-        stats.excellentCount++;
-      }
+      formStats.get(formId).records.push(record);
     }
 
-    // 计算统计数据
-    const history = Array.from(formStats.values()).map(stats => ({
-      formId: stats.formId,
-      formName: stats.formName,
-      academicYear: stats.academicYear,
-      testDate: stats.testDate,
-      totalCount: stats.totalCount,
-      avgScore: stats.totalCount > 0 ? (stats.totalScore / stats.totalCount).toFixed(2) : 0,
-      passRate: stats.totalCount > 0 ? ((stats.passCount / stats.totalCount) * 100).toFixed(2) : 0,
-      excellentRate: stats.totalCount > 0 ? ((stats.excellentCount / stats.totalCount) * 100).toFixed(2) : 0
-    })).sort((a, b) => new Date(a.testDate || 0).getTime() - new Date(b.testDate || 0).getTime());
+    const history = Array.from(formStats.values()).map(item => {
+      const records = item.records;
+      const passCount = records.filter(record => toNumber(record.totalScore) >= 60).length;
+      const excellentCount = records.filter(record => toNumber(record.totalScore) >= 90).length;
+
+      return {
+        formId: item.formId,
+        formName: item.formName,
+        academicYear: item.academicYear,
+        testDate: item.testDate,
+        totalCount: records.length,
+        avgScore: getRecordsAverage(records),
+        passRate: toPercent(passCount, records.length),
+        excellentRate: toPercent(excellentCount, records.length),
+      };
+    }).sort((a, b) => new Date(a.testDate || 0).getTime() - new Date(b.testDate || 0).getTime());
 
     res.json({
       success: true,
@@ -862,17 +919,13 @@ export const getClassHistory = async (req: Request, res: Response) => {
         class: {
           id: classData.get('id'),
           cohort: classData.get('cohort'),
-          className: classData.get('className')
+          className: classData.get('className'),
         },
-        history
-      }
+        history,
+      },
     });
   } catch (error: any) {
     console.error('获取班级历史趋势失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取班级历史趋势失败',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: '获取班级历史趋势失败', error: error.message });
   }
 };

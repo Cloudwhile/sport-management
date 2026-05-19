@@ -15,6 +15,7 @@ const StudentDetail = () => import('@/views/students/StudentDetail.vue')
 const FormManagement = () => import('@/views/forms/Forms.vue')
 const RecordManagement = () => import('@/views/records/Records.vue')
 const Statistics = () => import('@/views/statistics/Statistics.vue')
+const CompleteDataImport = () => import('@/views/imports/CompleteDataImport.vue')
 const SystemSettings = () => import('@/views/settings/Settings.vue')
 const About = () => import('@/views/about/About.vue')
 
@@ -114,6 +115,15 @@ const routes: RouteRecordRaw[] = [
         meta: {
           roles: [UserRole.ADMIN, UserRole.TEACHER],
           title: '统计分析'
+        }
+      },
+      {
+        path: 'complete-data-import',
+        name: 'CompleteDataImport',
+        component: CompleteDataImport,
+        meta: {
+          roles: [UserRole.ADMIN],
+          title: '完整数据导入'
         }
       },
       {

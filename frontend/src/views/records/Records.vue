@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useSettingsStore } from '@/stores'
 import { useToast } from '@/composables/useToast'
 import { useLocalDraft } from '@/composables/useLocalDraft'
 import { useConfirm } from '@/composables/useConfirm'
@@ -45,6 +46,7 @@ enum Step {
 
 // Store & Toast & Draft & Confirm
 const authStore = useAuthStore()
+const settingsStore = useSettingsStore()
 const toast = useToast()
 const draft = useLocalDraft()
 const confirm = useConfirm()
@@ -81,9 +83,18 @@ const selectedForm = ref<PhysicalTestFormWithItems | null>(null)
 // 班级相关
 const classes = ref<Class[]>([])
 const selectedClass = ref<Class | null>(null)
-const cohortFilter = ref<string>('') // 年级筛选
+const cohortFilter = ref<string>('') // 入学级筛选
 const classProgressMap = ref<Map<number, { total: number; completed: number }>>(new Map()) // 班级完成进度
 
+const formatHighSchoolGradeName = (cohort: string): string => {
+  const cohortYear = String(cohort || '').match(/\d{4}/)?.[0] || String(cohort || '').trim()
+  return cohortYear ? `${settingsStore.schoolLevelLabel}${cohortYear}级` : '未指定入学级'
+}
+
+const formatHighSchoolClassName = (cohort?: string, className?: string): string => {
+  const cohortYear = String(cohort || '').match(/\d{4}/)?.[0] || String(cohort || '').trim()
+  return cohortYear ? `${settingsStore.schoolLevelLabel}${cohortYear}级${className || ''}` : (className || '-')
+}
 // 学生和体测数据
 const students = ref<Student[]>([])
 const testDataMap = ref<Map<number, Record<string, any>>>(new Map())
@@ -201,16 +212,16 @@ const getClassProgressPercent = (classId: number) => {
   return Math.round((progress.completed / progress.total) * 100)
 }
 
-// 过滤符合年级的班级
+// 过滤符合入学级的班级
 const filteredClasses = computed(() => {
   if (!selectedForm.value) return []
 
   const participatingCohorts = selectedForm.value.participatingCohorts || []
 
-  // 先按表单的参与年级过滤
+  // 先按表单的参与入学级过滤
   let filtered = classes.value.filter(cls => participatingCohorts.includes(cls.cohort))
 
-  // 再按用户选择的年级过滤
+  // 再按用户选择的入学级过滤
   if (cohortFilter.value) {
     filtered = filtered.filter(cls => cls.cohort === cohortFilter.value)
   }
@@ -218,7 +229,7 @@ const filteredClasses = computed(() => {
   return filtered
 })
 
-// 获取所有可选的年级（从参与表单的班级中提取）
+// 获取所有可选的入学级（从参与表单的班级中提取）
 const availableCohorts = computed(() => {
   if (!selectedForm.value) return []
 
@@ -1083,9 +1094,9 @@ watch(currentStep, (newStep) => {
 
         <!-- 步骤 2: 选择班级 -->
         <div v-else-if="currentStep === Step.SELECT_CLASS">
-          <!-- 年级筛选 -->
+          <!-- 入学级筛选 -->
           <div v-if="availableCohorts.length > 0" class="mb-4 flex items-center gap-2">
-            <span class="text-sm font-medium text-gray-700">筛选年级：</span>
+            <span class="text-sm font-medium text-gray-700">筛选入学级：</span>
             <div class="flex items-center gap-2">
               <button
                 :class="[
@@ -1109,7 +1120,7 @@ watch(currentStep, (newStep) => {
                 ]"
                 @click="cohortFilter = cohort"
               >
-                {{ cohort }} 级
+                {{ formatHighSchoolGradeName(cohort) }}
               </button>
             </div>
             <span v-if="cohortFilter" class="text-sm text-gray-500">
@@ -1120,7 +1131,7 @@ watch(currentStep, (newStep) => {
           <div v-if="noEligibleClasses" class="text-center py-12">
             <p class="text-gray-500 mb-2">该表单没有符合条件的班级可以录入数据</p>
             <p class="text-sm text-gray-400">
-              适用年级: {{ selectedForm?.participatingCohorts.map(c => c + '级').join('、') }}
+              适用入学级: {{ selectedForm?.participatingCohorts.map(formatHighSchoolGradeName).join('、') }}
             </p>
           </div>
           <div v-else-if="filteredClasses.length === 0" class="text-center py-12 text-gray-500">
@@ -1134,7 +1145,7 @@ watch(currentStep, (newStep) => {
               @click="selectClass(classItem)"
             >
               <h3 class="font-semibold text-gray-900 mb-2">
-                {{ classItem.cohort }} {{ classItem.className }}
+                {{ formatHighSchoolClassName(classItem.cohort, classItem.className) }}
               </h3>
               <div class="space-y-2 text-sm text-gray-600">
                 <p v-if="classItem.graduated" class="text-red-500">已毕业</p>
@@ -1179,7 +1190,7 @@ watch(currentStep, (newStep) => {
                 </p>
                 <p>
                   <span class="font-semibold">班级:</span>
-                  {{ selectedClass?.cohort }} {{ selectedClass?.className }}
+                  {{ formatHighSchoolClassName(selectedClass?.cohort, selectedClass?.className) }}
                 </p>
                 <p>
                   <span class="font-semibold">学生人数:</span> {{ students.length }}

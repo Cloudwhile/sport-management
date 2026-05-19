@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useFormsStore } from '@/stores/forms'
 import { useAuthStore } from '@/stores/auth'
 import { useClassesStore } from '@/stores/classes'
+import { useSettingsStore } from '@/stores'
 import { useToast } from '@/composables/useToast'
 import Modal from '@/components/common/Modal.vue'
 import Input from '@/components/common/Input.vue'
@@ -36,6 +37,7 @@ import {
 const formsStore = useFormsStore()
 const authStore = useAuthStore()
 const classesStore = useClassesStore()
+const settingsStore = useSettingsStore()
 const toast = useToast()
 
 // State
@@ -64,6 +66,10 @@ const formErrors = ref<Record<string, string>>({})
 const availableCohorts = ref<string[]>([])
 const showCohortsDropdown = ref(false)
 
+const formatHighSchoolGradeName = (cohort: string): string => {
+  const cohortYear = String(cohort || '').match(/\d{4}/)?.[0] || String(cohort || '').trim()
+  return cohortYear ? `${settingsStore.schoolLevelLabel}${cohortYear}级` : '未指定入学级'
+}
 // Test Items Modal
 const showTestItemsModal = ref(false)
 const currentFormId = ref<number | null>(null)
@@ -139,9 +145,9 @@ const fetchAvailableCohorts = async () => {
     const response = await classesStore.fetchList()
     // 从班级列表中提取所有 cohort,去重并排序
     const cohorts = [...new Set(response.data.map(c => c.cohort))]
-    availableCohorts.value = cohorts.sort().reverse() // 降序,最新年级在前
+    availableCohorts.value = cohorts.sort().reverse() // 降序，最新入学级在前
   } catch (err: any) {
-    toast.error(err.message || '加载年级列表失败')
+    toast.error(err.message || '加载入学级列表失败')
   }
 }
 
@@ -196,14 +202,14 @@ const openCreateModal = async () => {
   // 获取当前年份
   const currentYear = new Date().getFullYear()
 
-  // 加载可用年级
+  // 加载可用入学级
   await fetchAvailableCohorts()
 
-  // 计算默认参与年级（今年和前两年，共三年）
+  // 计算默认参与入学级（今年和前两年，共三年）
   const defaultCohorts: string[] = []
   for (let i = 0; i <= 2; i++) {
     const cohort = (currentYear - i).toString()
-    // 只添加存在的年级
+    // 只添加存在的入学级
     if (availableCohorts.value.includes(cohort)) {
       defaultCohorts.push(cohort)
     }
@@ -271,9 +277,9 @@ const validateForm = (): boolean => {
     formErrors.value.academicYear = '学年格式不正确，例如：2025'
   }
 
-  // 验证参与年级
+  // 验证参与入学级
   if (!formData.value.participatingCohorts || formData.value.participatingCohorts.length === 0) {
-    formErrors.value.participatingCohorts = '请至少选择一个参与年级'
+    formErrors.value.participatingCohorts = '请至少选择一个参与入学级'
   }
 
   return Object.keys(formErrors.value).length === 0
@@ -482,7 +488,7 @@ onMounted(() => {
                   学年
                 </th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  参与年级
+                  参与入学级
                 </th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   测试日期
@@ -513,7 +519,7 @@ onMounted(() => {
                 <td class="px-6 py-4">
                   <div class="flex gap-1 flex-wrap">
                     <Badge v-for="cohort in form.participatingCohorts" :key="cohort" variant="info">
-                      {{ cohort }}级
+                      {{ formatHighSchoolGradeName(cohort) }}
                     </Badge>
                   </div>
                 </td>
@@ -620,7 +626,7 @@ onMounted(() => {
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">
-            参与年级 
+            参与入学级 
             <span class="text-red-500 ml-1">*</span>
           </label>
           <!-- 下拉多选框 -->
@@ -636,7 +642,7 @@ onMounted(() => {
                   :key="cohort"
                   class="inline-flex items-center px-2.5 py-1 rounded-md text-sm font-medium bg-blue-100 text-blue-800"
                 >
-                  {{ cohort }}级
+                  {{ formatHighSchoolGradeName(cohort) }}
                   <button
                     type="button"
                     @click.stop="removeCohort(cohort)"
@@ -650,7 +656,7 @@ onMounted(() => {
               </div>
               <!-- 占位文字 -->
               <div v-else class="text-gray-400">
-                请选择参与年级
+                请选择参与入学级
               </div>
               <!-- 下拉箭头 -->
               <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
@@ -676,10 +682,10 @@ onMounted(() => {
                   v-model="formData.participatingCohorts"
                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 mr-2"
                 />
-                <span class="text-sm">{{ cohort }}级</span>
+                <span class="text-sm">{{ formatHighSchoolGradeName(cohort) }}</span>
               </label>
               <div v-if="availableCohorts.length === 0" class="px-3 py-2 text-sm text-gray-500">
-                暂无可选年级
+                暂无可选入学级
               </div>
             </div>
           </div>

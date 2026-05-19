@@ -16,6 +16,27 @@ router.use(authenticate);
 router.get('/', studentController.getAll);
 
 /**
+ * @route   POST /api/students/batch-import
+ * @desc    批量导入学生（Excel文件）
+ * @access  Admin + Teacher
+ */
+router.post('/batch-import', requireTeacher, upload.single('file'), studentController.batchImport);
+
+/**
+ * @route   GET /api/students/batch-import/jobs/:jobId
+ * @desc    获取学生批量导入任务进度
+ * @access  Admin + Teacher
+ */
+router.get('/batch-import/jobs/:jobId', requireTeacher, studentController.getBatchImportJobStatus);
+
+/**
+ * @route   POST /api/students/batch-import/jobs/:jobId/cancel
+ * @desc    取消学生批量导入任务
+ * @access  Admin + Teacher
+ */
+router.post('/batch-import/jobs/:jobId/cancel', requireTeacher, studentController.cancelBatchImportJob);
+
+/**
  * @route   GET /api/students/:id
  * @desc    获取学生详情
  * @access  Private (认证用户)
@@ -49,12 +70,5 @@ router.delete('/:id', requireTeacher, studentController.deleteStudent);
  * @access  Admin + Teacher
  */
 router.post('/:id/transfer', requireTeacher, studentController.transfer);
-
-/**
- * @route   POST /api/students/batch-import
- * @desc    批量导入学生（Excel文件）
- * @access  Admin + Teacher
- */
-router.post('/batch-import', requireTeacher, upload.single('file'), studentController.batchImport);
 
 export default router;

@@ -1,12 +1,122 @@
 import { Request, Response } from 'express';
+import { randomUUID } from 'node:crypto';
 import { Op } from 'sequelize';
 import * as XLSX from 'xlsx';
+import sequelize from '../database/connection.js';
 import {
   Student,
   Class,
   StudentClassRelation,
 } from '../models/index.js';
 import { hashPassword } from '../utils/password.js';
+import { normalizeClassName } from '../utils/classNameFormatter.js';
+
+type StudentBatchImportJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceling' | 'canceled';
+
+interface StudentBatchImportResult {
+  success: number;
+  failed: number;
+  warnings: number;
+  errors: Array<{
+    row: number;
+    error: string;
+    data: any;
+    type: 'error' | 'warning';
+  }>;
+}
+
+interface StudentBatchImportJob {
+  id: string;
+  status: StudentBatchImportJobStatus;
+  fileName: string;
+  academicYear: string;
+  totalRows: number;
+  processedRows: number;
+  progress: number;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  estimatedSecondsRemaining: number | null;
+  currentRow?: number;
+  message: string;
+  cancelRequested: boolean;
+  result?: StudentBatchImportResult;
+  error?: string;
+}
+
+class StudentBatchImportCanceledError extends Error {
+  constructor() {
+    super('学生批量导入已取消，事务已回滚');
+    this.name = 'StudentBatchImportCanceledError';
+  }
+}
+
+const studentBatchImportJobs = new Map<string, StudentBatchImportJob>();
+
+const toStudentBatchImportJobSnapshot = (job: StudentBatchImportJob) => {
+  const { cancelRequested, ...snapshot } = job;
+  return snapshot;
+};
+
+const updateStudentBatchImportJob = (
+  job: StudentBatchImportJob,
+  update: Partial<StudentBatchImportJob>
+) => {
+  Object.assign(job, update);
+  job.updatedAt = new Date().toISOString();
+
+  if (job.totalRows > 0) {
+    job.progress = Math.min(100, Math.round((job.processedRows / job.totalRows) * 100));
+  }
+
+  if (job.status === 'running' && job.processedRows > 0 && job.processedRows < job.totalRows) {
+    const elapsedSeconds = (Date.now() - Date.parse(job.startedAt)) / 1000;
+    const rowsPerSecond = elapsedSeconds > 0 ? job.processedRows / elapsedSeconds : 0;
+    job.estimatedSecondsRemaining = rowsPerSecond > 0
+      ? Math.ceil((job.totalRows - job.processedRows) / rowsPerSecond)
+      : null;
+  } else {
+    job.estimatedSecondsRemaining = null;
+  }
+};
+
+const scheduleStudentBatchImportJobCleanup = (jobId: string) => {
+  setTimeout(() => {
+    studentBatchImportJobs.delete(jobId);
+  }, 60 * 60 * 1000).unref();
+};
+
+const createStudentBatchImportJob = (fileName: string, academicYear: string, totalRows: number) => {
+  const now = new Date().toISOString();
+  const job: StudentBatchImportJob = {
+    id: randomUUID(),
+    status: 'queued',
+    fileName,
+    academicYear,
+    totalRows,
+    processedRows: 0,
+    progress: 0,
+    startedAt: now,
+    updatedAt: now,
+    estimatedSecondsRemaining: null,
+    message: '学生批量导入等待开始',
+    cancelRequested: false,
+  };
+
+  studentBatchImportJobs.set(job.id, job);
+  return job;
+};
+
+const getDisplayFileName = (file: Express.Multer.File): string => {
+  const originalName = file.originalname || '未命名文件';
+
+  try {
+    const decoded = Buffer.from(originalName, 'latin1').toString('utf8');
+    return decoded.includes('�') ? originalName : decoded;
+  } catch {
+    return originalName;
+  }
+};
 
 // 获取学生列表
 export const getAll = async (req: Request, res: Response): Promise<void> => {
@@ -476,65 +586,75 @@ export const transfer = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// 批量导入学生
-export const batchImport = async (req: Request, res: Response): Promise<void> => {
+const parseStudentImportRows = (file: Express.Multer.File) => {
+  const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  return XLSX.utils.sheet_to_json(worksheet);
+};
+
+const parseStudentBirthDate = (value: unknown): { value: string | null; warning?: string } => {
+  if (!value) return { value: null };
+
+  if (typeof value === 'number') {
+    const excelEpoch = new Date(1899, 11, 30);
+    const jsDate = new Date(excelEpoch.getTime() + value * 86400000);
+    const year = jsDate.getFullYear();
+    const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+    const day = String(jsDate.getDate()).padStart(2, '0');
+    return { value: `${year}-${month}-${day}` };
+  }
+
+  const dateText = value.toString().trim();
+  const dateMatch = dateText.match(/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (!dateMatch) {
+    return { value: null, warning: `出生日期格式错误："${dateText}"，应为 YYYY/MM/DD 格式` };
+  }
+
+  return {
+    value: `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`,
+  };
+};
+
+const importStudentRows = async (
+  rows: any[],
+  academicYear: string,
+  context?: {
+    isCanceled?: () => boolean;
+    reportProgress?: (processedRows: number, currentRow: number) => void;
+  }
+): Promise<StudentBatchImportResult> => {
+  const transaction = await sequelize.transaction();
+  const results: StudentBatchImportResult = {
+    success: 0,
+    failed: 0,
+    warnings: 0,
+    errors: [],
+  };
+  const classCache = new Map<string, number>();
+
+  const ensureNotCanceled = () => {
+    if (context?.isCanceled?.()) {
+      throw new StudentBatchImportCanceledError();
+    }
+  };
+
   try {
-    // 检查是否有上传文件
-    if (!req.file) {
-      res.status(400).json({ error: '请上传文件' });
-      return;
-    }
+    for (let i = 0; i < rows.length; i++) {
+      ensureNotCanceled();
 
-    // 获取学年参数
-    const academicYear = req.body.academicYear;
-    if (!academicYear) {
-      res.status(400).json({ error: '请提供学年参数' });
-      return;
-    }
-
-    // 解析 Excel 文件
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
-
-    const results = {
-      success: 0,
-      failed: 0,
-      warnings: 0,
-      errors: [] as Array<{
-        row: number;
-        error: string;
-        data: any;
-        type: 'error' | 'warning';
-      }>,
-    };
-
-    // 用于跟踪每个班级的缓存（不再包含学年，因为学年由用户统一指定）
-    const classCache = new Map<string, number>(); // key: cohort-className, value: classId
-
-    // 处理每一行数据
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i] as any;
-      const rowNumber = i + 2; // Excel行号从2开始（第1行是表头）
+      const row = rows[i] as any;
+      const rowNumber = i + 2;
 
       try {
-        // 解析班级名称，格式：高中2024级1班
         const classNameRaw = row['班级名称']?.toString().trim();
+        const classMatch = classNameRaw?.match(/(\d{4})级(\d+)班/);
         if (!classNameRaw) {
-          results.errors.push({
-            row: rowNumber,
-            error: '缺少班级名称',
-            data: row,
-            type: 'error',
-          });
+          results.errors.push({ row: rowNumber, error: '缺少班级名称', data: row, type: 'error' });
           results.failed++;
           continue;
         }
 
-        // 提取入学年份（级）和班级编号
-        // 匹配格式：高中2024级1班 或 初中2023级2班
-        const classMatch = classNameRaw.match(/(\d{4})级(\d+)班/);
         if (!classMatch) {
           results.errors.push({
             row: rowNumber,
@@ -546,64 +666,41 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           continue;
         }
 
-        const cohort = classMatch[1]; // 入学年份，如 "2024"
-        const classNumber = classMatch[2]; // 班级编号，如 "1"
-
-        // 将数字班级编号转换为中文
-        const numberToChinese = (num: string): string => {
-          const map: Record<string, string> = {
-            '1': '一', '2': '二', '3': '三', '4': '四', '5': '五',
-            '6': '六', '7': '七', '8': '八', '9': '九', '10': '十',
-            '11': '十一', '12': '十二', '13': '十三', '14': '十四', '15': '十五',
-            '16': '十六', '17': '十七', '18': '十八', '19': '十九', '20': '二十'
-          };
-          return map[num] || num;
-        };
-
-        // 从班级名称中提取学段和班级名（如 "一班"）
-        const classNameOnly = `${numberToChinese(classNumber)}班`;
-
-        // 查找或缓存班级
+        const cohort = classMatch[1];
+        const classNumber = classMatch[2];
+        const classNameOnly = normalizeClassName(`${classNumber}班`);
         const cacheKey = `${cohort}-${classNameOnly}`;
         let classId = classCache.get(cacheKey);
 
         if (!classId) {
-          // 查找班级
           let foundClass = await Class.findOne({
-            where: {
-              cohort,
-              className: classNameOnly,
-            },
+            where: { cohort, className: classNameOnly },
+            transaction,
           });
 
-          // 如果班级不存在，自动创建
           if (!foundClass) {
-            // 生成班级账号：格式为 class_cohort_classNumber，如 class_2024_01
             const classAccount = `class_${cohort}_${classNumber.padStart(2, '0')}`;
-            // 生成默认密码：格式为 cohort+班级编号，如 202401
             const defaultPassword = `${cohort}${classNumber.padStart(2, '0')}`;
-            // 对密码进行 hash
             const classPassword = await hashPassword(defaultPassword);
 
-            foundClass = await Class.create({
-              cohort,
-              className: classNameOnly,
-              classAccount,
-              classPassword,
-            });
-
-            console.log(`自动创建班级：${cohort}级 ${classNameOnly}，账号：${classAccount}，默认密码：${defaultPassword}`);
+            foundClass = await Class.create(
+              {
+                cohort,
+                className: classNameOnly,
+                classAccount,
+                classPassword,
+              },
+              { transaction }
+            );
           }
 
           classId = foundClass.get('id') as number;
           classCache.set(cacheKey, classId);
         }
 
-        // 验证必填字段
         const studentIdNational = row['学籍号']?.toString().trim();
         const name = row['姓名']?.toString().trim();
         const genderCode = row['性别'];
-
         const missingFields = [];
         if (!studentIdNational) missingFields.push('学籍号');
         if (!name) missingFields.push('姓名');
@@ -620,14 +717,9 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           continue;
         }
 
-        // 性别转换：1=男，2=女
-        let gender: 'male' | 'female';
         const genderNum = parseInt(genderCode.toString());
-        if (genderNum === 1) {
-          gender = 'male';
-        } else if (genderNum === 2) {
-          gender = 'female';
-        } else {
+        const gender = genderNum === 1 ? 'male' : genderNum === 2 ? 'female' : null;
+        if (!gender) {
           results.errors.push({
             row: rowNumber,
             error: `性别代码错误，应为1（男）或2（女），实际为"${genderCode}"`,
@@ -638,156 +730,99 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           continue;
         }
 
-        // 处理出生日期（格式：2009/08/08 或 Excel序列号）
-        let birthDate: string | null = null;
-        if (row['出生日期']) {
-          const birthDateRaw = row['出生日期'];
-
-          // 检查是否为 Excel 日期序列号（纯数字）
-          if (typeof birthDateRaw === 'number') {
-            // Excel 日期序列号转换为 JS 日期
-            // Excel 日期从 1900-01-01 开始，但有一个1900年闰年bug，实际需要减去2
-            const excelEpoch = new Date(1899, 11, 30); // 1899年12月30日
-            const jsDate = new Date(excelEpoch.getTime() + birthDateRaw * 86400000); // 86400000ms = 1天
-
-            const year = jsDate.getFullYear();
-            const month = String(jsDate.getMonth() + 1).padStart(2, '0');
-            const day = String(jsDate.getDate()).padStart(2, '0');
-            birthDate = `${year}-${month}-${day}`;
-          } else {
-            // 尝试解析文本格式的日期
-            const birthDateStr = birthDateRaw.toString().trim();
-            const dateMatch = birthDateStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-            if (dateMatch) {
-              const year = dateMatch[1];
-              const month = dateMatch[2].padStart(2, '0');
-              const day = dateMatch[3].padStart(2, '0');
-              birthDate = `${year}-${month}-${day}`;
-            } else {
-              results.errors.push({
-                row: rowNumber,
-                error: `出生日期格式错误："${birthDateStr}"，应为 YYYY/MM/DD 格式`,
-                data: row,
-                type: 'warning',
-              });
-              results.warnings++;
-            }
-          }
+        const birthDateResult = parseStudentBirthDate(row['出生日期']);
+        if (birthDateResult.warning) {
+          results.errors.push({
+            row: rowNumber,
+            error: birthDateResult.warning,
+            data: row,
+            type: 'warning',
+          });
+          results.warnings++;
         }
 
-        // 处理身份证号（可能为空，转为字符串）
-        let idCardNumber: string | null = null;
-        if (row['身份证号']) {
-          idCardNumber = row['身份证号'].toString().trim();
-          if (!idCardNumber) {
-            idCardNumber = null;
-          }
-        }
+        const idCardNumber = row['身份证号']?.toString().trim() || null;
+        const ethnicityCode = row['民族代码']?.toString().trim() || null;
 
-        // 处理民族代码（数字）
-        let ethnicityCode: string | null = null;
-        if (row['民族代码']) {
-          ethnicityCode = row['民族代码'].toString().trim();
-          if (!ethnicityCode) {
-            ethnicityCode = null;
-          }
-        }
-
-        // 检查学籍号是否已存在
         const existingStudent = await Student.findOne({
           where: { studentIdNational },
+          transaction,
         });
-
         let student: any;
         let isUpdate = false;
 
         if (existingStudent) {
-          // 学生已存在，更新学生信息
           isUpdate = true;
-          await existingStudent.update({
-            name,
-            gender,
-            birthDate,
-            idCardNumber,
-            ethnicityCode,
-          });
+          await existingStudent.update(
+            {
+              name,
+              gender,
+              birthDate: birthDateResult.value,
+              idCardNumber,
+              ethnicityCode,
+            },
+            { transaction }
+          );
           student = existingStudent;
         } else {
-          // 学生不存在，创建新学生
-          const studentIdSchool = studentIdNational; // 使用学籍号作为学校学号
-
-          student = await Student.create({
-            studentIdNational,
-            studentIdSchool,
-            name,
-            gender,
-            birthDate,
-            idCardNumber,
-            ethnicityCode,
-          });
+          student = await Student.create(
+            {
+              studentIdNational,
+              studentIdSchool: studentIdNational,
+              name,
+              gender,
+              birthDate: birthDateResult.value,
+              idCardNumber,
+              ethnicityCode,
+            },
+            { transaction }
+          );
         }
 
-        // 处理班级关联
         const studentId = student.get('id') as number;
-
-        // 查找该学生当前激活的班级关系
         const currentActiveRelation = await StudentClassRelation.findOne({
-          where: {
-            studentId,
-            isActive: true,
-          },
+          where: { studentId, isActive: true },
+          transaction,
         });
 
-        // 检查是否需要更新班级关系
         let needUpdate = true;
         if (currentActiveRelation) {
           const currentClassId = currentActiveRelation.get('classId') as number;
           const currentAcademicYear = currentActiveRelation.get('academicYear') as string;
-
-          // 如果当前班级和学年都一致，不需要更新
-          if (currentClassId === classId && currentAcademicYear === academicYear) {
-            needUpdate = false;
-          }
+          needUpdate = currentClassId !== classId || currentAcademicYear !== academicYear;
         }
 
         if (needUpdate) {
-          // 将之前的所有关系设置为 inactive
           await StudentClassRelation.update(
             { isActive: false },
             {
-              where: {
-                studentId,
-                isActive: true,
-              },
+              where: { studentId, isActive: true },
+              transaction,
             }
           );
 
-          // 检查是否已经存在相同班级和学年的关系（可能之前被设为 inactive）
           const existingRelation = await StudentClassRelation.findOne({
-            where: {
-              studentId,
-              classId: classId,
-              academicYear: academicYear,
-            },
+            where: { studentId, classId, academicYear },
+            transaction,
           });
 
           if (existingRelation) {
-            // 已存在该关系，重新激活
-            await existingRelation.update({ isActive: true });
+            await existingRelation.update({ isActive: true }, { transaction });
           } else {
-            // 不存在，创建新的班级关系
-            await StudentClassRelation.create({
-              studentId,
-              classId: classId,
-              academicYear: academicYear,
-              isActive: true,
-            });
+            await StudentClassRelation.create(
+              {
+                studentId,
+                classId,
+                academicYear,
+                isActive: true,
+              },
+              { transaction }
+            );
           }
         }
 
         results.success++;
 
-        // 如果是更新操作，添加一个提示
         if (isUpdate) {
           results.errors.push({
             row: rowNumber,
@@ -798,6 +833,8 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           results.warnings++;
         }
       } catch (error) {
+        if (error instanceof StudentBatchImportCanceledError) throw error;
+
         console.error(`第 ${rowNumber} 行导入失败:`, (error as Error).message, '数据:', row);
         results.errors.push({
           row: rowNumber,
@@ -806,18 +843,142 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
           type: 'error',
         });
         results.failed++;
+      } finally {
+        context?.reportProgress?.(i + 1, rowNumber);
       }
     }
 
-    console.log('批量导入完成:', results);
-    console.log('失败的前10条:', results.errors.slice(0, 10));
+    ensureNotCanceled();
+    await transaction.commit();
+    return results;
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+};
+
+const runStudentBatchImportJob = async (jobId: string, file: Express.Multer.File, academicYear: string) => {
+  const job = studentBatchImportJobs.get(jobId);
+  if (!job) return;
+
+  updateStudentBatchImportJob(job, {
+    status: 'running',
+    message: '服务端正在解析学生导入文件',
+  });
+
+  try {
+    if (job.cancelRequested) {
+      throw new StudentBatchImportCanceledError();
+    }
+
+    const rows = parseStudentImportRows(file);
+    updateStudentBatchImportJob(job, {
+      totalRows: rows.length,
+      message: '服务端正在导入学生数据',
+    });
+
+    if (job.cancelRequested) {
+      throw new StudentBatchImportCanceledError();
+    }
+
+    const result = await importStudentRows(rows, academicYear, {
+      isCanceled: () => job.cancelRequested,
+      reportProgress: (processedRows, currentRow) => {
+        updateStudentBatchImportJob(job, {
+          processedRows,
+          currentRow,
+          message: `服务端正在导入第 ${currentRow} 行`,
+        });
+      },
+    });
+
+    updateStudentBatchImportJob(job, {
+      status: 'completed',
+      processedRows: job.totalRows,
+      progress: 100,
+      completedAt: new Date().toISOString(),
+      message: '学生批量导入完成',
+      result,
+    });
+  } catch (error: any) {
+    const canceled = error instanceof StudentBatchImportCanceledError || job.cancelRequested;
+    updateStudentBatchImportJob(job, {
+      status: canceled ? 'canceled' : 'failed',
+      completedAt: new Date().toISOString(),
+      message: canceled ? '学生批量导入已取消，事务已回滚' : '学生批量导入失败，事务已回滚',
+      error: error.message,
+    });
+  } finally {
+    scheduleStudentBatchImportJobCleanup(jobId);
+  }
+};
+
+// 批量导入学生
+export const batchImport = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: '请上传文件' });
+      return;
+    }
+
+    const academicYear = req.body.academicYear;
+    if (!academicYear) {
+      res.status(400).json({ error: '请提供学年参数' });
+      return;
+    }
+
+    if (req.body.asyncImport?.toString() === 'true') {
+      const job = createStudentBatchImportJob(getDisplayFileName(req.file), academicYear, 0);
+      res.status(202).json({ data: toStudentBatchImportJobSnapshot(job) });
+      void runStudentBatchImportJob(job.id, req.file, academicYear);
+      return;
+    }
+
+    const rows = parseStudentImportRows(req.file);
+    const results = await importStudentRows(rows, academicYear);
 
     res.json({
       message: `批量导入完成，成功 ${results.success} 条，失败 ${results.failed} 条，警告 ${results.warnings} 条`,
       data: results,
     });
   } catch (error) {
+    if (error instanceof StudentBatchImportCanceledError) {
+      res.status(499).json({ error: '学生批量导入已取消', message: error.message });
+      return;
+    }
+
     console.error('批量导入失败:', error);
     res.status(500).json({ error: '批量导入失败', message: (error as Error).message });
   }
+};
+
+export const getBatchImportJobStatus = async (req: Request, res: Response): Promise<void> => {
+  const job = studentBatchImportJobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: '学生批量导入任务不存在或已过期' });
+    return;
+  }
+
+  res.json({ data: toStudentBatchImportJobSnapshot(job) });
+};
+
+export const cancelBatchImportJob = async (req: Request, res: Response): Promise<void> => {
+  const job = studentBatchImportJobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: '学生批量导入任务不存在或已过期' });
+    return;
+  }
+
+  if (job.status === 'completed' || job.status === 'failed' || job.status === 'canceled') {
+    res.json({ data: toStudentBatchImportJobSnapshot(job) });
+    return;
+  }
+
+  job.cancelRequested = true;
+  updateStudentBatchImportJob(job, {
+    status: 'canceling',
+    message: '正在取消学生批量导入并回滚事务',
+  });
+
+  res.json({ data: toStudentBatchImportJobSnapshot(job) });
 };

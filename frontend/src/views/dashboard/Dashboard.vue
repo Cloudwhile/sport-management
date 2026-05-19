@@ -19,12 +19,14 @@
     <!-- 欢迎信息 -->
     <div class="bg-white shadow rounded-lg p-6 mb-6">
       <div class="flex items-center">
-        <UserCircleIcon class="h-12 w-12 text-indigo-600" aria-hidden="true" />
-        <div class="ml-4">
-          <h2 class="text-2xl font-semibold text-gray-900">
-            欢迎回来，{{ user?.realName || user?.username }}
-          </h2>
-          <p class="text-sm text-gray-500 mt-1">{{ roleText }}</p>
+        <div class="flex items-center">
+          <UserCircleIcon class="h-12 w-12 text-indigo-600" aria-hidden="true" />
+          <div class="ml-4">
+            <h2 class="text-2xl font-semibold text-gray-900">
+              欢迎回来，{{ user?.realName || user?.username }}
+            </h2>
+            <p class="text-sm text-gray-500 mt-1">{{ roleText }}</p>
+          </div>
         </div>
       </div>
     </div>

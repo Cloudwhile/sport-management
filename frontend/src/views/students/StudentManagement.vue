@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStudentsStore } from '@/stores/students'
 import { useClassesStore } from '@/stores/classes'
+import { useSettingsStore } from '@/stores'
 import { useToast } from '@/composables/useToast'
 import studentsAPI from '@/api/students'
+import type { StudentBatchImportJob } from '@/api/students'
 import { Gender } from '@/types'
+import { formatHighSchoolClassName } from '@/utils/classNameFormatter'
 import type { Student, CreateStudentRequest, UpdateStudentRequest, Class } from '@/types'
 import Table, { type TableColumn } from '@/components/common/Table.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -26,7 +29,9 @@ import {
 const router = useRouter()
 const studentsStore = useStudentsStore()
 const classesStore = useClassesStore()
+const settingsStore = useSettingsStore()
 const toast = useToast()
+const schoolLevelLabel = computed(() => settingsStore.schoolLevelLabel)
 
 // 分页状态
 const pagination = reactive({
@@ -58,6 +63,17 @@ const isUploading = ref(false)
 const importResults = ref<any>(null)
 const isDragging = ref(false)
 const importAcademicYear = ref<string>(new Date().getFullYear().toString()) // 批量导入的学年
+const batchUploadProgress = ref(0)
+const batchUploadedBytes = ref(0)
+const batchUploadTotalBytes = ref(0)
+const batchRemainingSeconds = ref<number | null>(null)
+const batchUploadStartedAt = ref<number | null>(null)
+const batchElapsedNow = ref(Date.now())
+const batchElapsedTimer = ref<number | null>(null)
+const batchImportController = ref<AbortController | null>(null)
+const batchImportJob = ref<StudentBatchImportJob | null>(null)
+const batchImportJobPoller = ref<number | null>(null)
+const batchCancelRequested = ref(false)
 
 // 表单数据
 const formData = reactive<CreateStudentRequest>({
@@ -105,7 +121,7 @@ const genderOptions: SelectOption[] = [
 // 班级选项
 const classOptions = computed<SelectOption[]>(() => {
   return classesStore.items.map(cls => ({
-    label: `${cls.cohort} ${cls.className}`,
+    label: formatHighSchoolClassName(cls.cohort, cls.className, schoolLevelLabel.value),
     value: cls.id
   }))
 })
@@ -367,25 +383,229 @@ const handleTransfer = async () => {
   }
 }
 
+const formatFileSize = (size: number) => {
+  if (size <= 0) return '0 B'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+const formatDuration = (secondsValue: number) => {
+  if (secondsValue <= 1) return '少于 1 秒'
+
+  const minutes = Math.floor(secondsValue / 60)
+  const seconds = Math.round(secondsValue % 60)
+  if (minutes > 0) return `${minutes} 分 ${seconds} 秒`
+  return `${seconds} 秒`
+}
+
+const resetBatchImportProgress = () => {
+  stopBatchImportJobPolling()
+  batchUploadProgress.value = 0
+  batchUploadedBytes.value = 0
+  batchUploadTotalBytes.value = selectedFile.value?.size || 0
+  batchRemainingSeconds.value = null
+  batchUploadStartedAt.value = null
+  batchElapsedNow.value = Date.now()
+  batchImportController.value = null
+  batchImportJob.value = null
+  batchCancelRequested.value = false
+}
+
+const stopBatchElapsedTimer = () => {
+  if (batchElapsedTimer.value !== null) {
+    window.clearInterval(batchElapsedTimer.value)
+    batchElapsedTimer.value = null
+  }
+}
+
+const startBatchElapsedTimer = () => {
+  stopBatchElapsedTimer()
+  batchElapsedNow.value = Date.now()
+  batchElapsedTimer.value = window.setInterval(() => {
+    batchElapsedNow.value = Date.now()
+  }, 1000)
+}
+
+const updateBatchUploadProgress = (payload: {
+  progress: number
+  loaded: number
+  total: number
+  rate?: number
+  estimated?: number
+}) => {
+  batchUploadProgress.value = payload.progress
+  batchUploadedBytes.value = payload.loaded
+  batchUploadTotalBytes.value = payload.total
+
+  if (payload.estimated !== undefined) {
+    batchRemainingSeconds.value = payload.estimated
+  } else if (payload.rate && payload.rate > 0) {
+    batchRemainingSeconds.value = Math.max((payload.total - payload.loaded) / payload.rate, 0)
+  }
+
+  if (payload.progress >= 100) {
+    batchUploadedBytes.value = payload.total
+    batchRemainingSeconds.value = null
+  }
+}
+
+const batchDisplayProgress = computed(() => {
+  if (batchImportJob.value) return batchImportJob.value.progress
+  return batchUploadProgress.value
+})
+
+const batchRemainingText = computed(() => {
+  if (batchCancelRequested.value) return '正在取消'
+  if (batchImportJob.value) {
+    if (batchImportJob.value.status === 'completed') return '0 秒'
+    if (batchImportJob.value.status === 'canceled') return '已取消'
+    if (batchImportJob.value.status === 'failed') return '导入失败'
+    return batchImportJob.value.estimatedSecondsRemaining !== null
+      ? formatDuration(batchImportJob.value.estimatedSecondsRemaining)
+      : '计算中'
+  }
+  if (!isUploading.value) return '未开始'
+  if (batchUploadProgress.value >= 100) return '服务端导入中'
+  if (batchRemainingSeconds.value === null) return '计算中'
+  return formatDuration(batchRemainingSeconds.value)
+})
+
+const batchElapsedText = computed(() => {
+  if (batchImportJob.value) {
+    const startedAt = Date.parse(batchImportJob.value.startedAt)
+    const endedAt = batchImportJob.value.completedAt ? Date.parse(batchImportJob.value.completedAt) : batchElapsedNow.value
+
+    if (Number.isFinite(startedAt) && Number.isFinite(endedAt) && endedAt >= startedAt) {
+      return formatDuration(Math.floor((endedAt - startedAt) / 1000))
+    }
+  }
+
+  if (!batchUploadStartedAt.value) return '0 秒'
+  return formatDuration(Math.floor((batchElapsedNow.value - batchUploadStartedAt.value) / 1000))
+})
+
+const batchCurrentText = computed(() => {
+  if (batchImportJob.value) {
+    if (batchImportJob.value.currentRow) {
+      return `${batchImportJob.value.fileName} 正在导入第 ${batchImportJob.value.currentRow} 行，${batchImportJob.value.processedRows}/${batchImportJob.value.totalRows} 行`
+    }
+    return `${batchImportJob.value.fileName} ${batchImportJob.value.message}`
+  }
+
+  if (!selectedFile.value) return '未选择文件'
+  if (batchUploadProgress.value >= 100) return `${selectedFile.value.name} 文件已上传，服务端正在导入`
+  return `${selectedFile.value.name} ${formatFileSize(batchUploadedBytes.value)} / ${formatFileSize(batchUploadTotalBytes.value || selectedFile.value.size)}`
+})
+
+const isBatchRequestCanceled = (error: any) => {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
+}
+
+const stopBatchImportJobPolling = () => {
+  if (batchImportJobPoller.value !== null) {
+    window.clearInterval(batchImportJobPoller.value)
+    batchImportJobPoller.value = null
+  }
+}
+
+const applyBatchImportJob = (job: StudentBatchImportJob) => {
+  batchImportJob.value = job
+  batchUploadProgress.value = 100
+  batchUploadedBytes.value = batchUploadTotalBytes.value || selectedFile.value?.size || 0
+
+  if (job.status === 'completed') {
+    stopBatchImportJobPolling()
+    stopBatchElapsedTimer()
+    isUploading.value = false
+    importResults.value = job.result
+    batchCancelRequested.value = false
+    const { success = 0, failed = 0, warnings = 0 } = job.result || {}
+    if (failed === 0 && warnings === 0) {
+      toast.success(`批量导入成功！共导入 ${success} 条数据`)
+    } else if (failed > 0 && success > 0) {
+      toast.warning(`批量导入完成，成功 ${success} 条，失败 ${failed} 条，请查看详情`)
+    } else if (failed > 0) {
+      toast.error(`批量导入失败，共 ${failed} 条数据存在问题，请查看详情`)
+    } else {
+      toast.warning(`批量导入完成，成功 ${success} 条，有 ${warnings} 条警告`)
+    }
+    if (success > 0) {
+      loadData()
+    }
+  } else if (job.status === 'failed') {
+    stopBatchImportJobPolling()
+    stopBatchElapsedTimer()
+    isUploading.value = false
+    toast.error(job.error || '批量导入失败')
+  } else if (job.status === 'canceled') {
+    stopBatchImportJobPolling()
+    stopBatchElapsedTimer()
+    isUploading.value = false
+    batchCancelRequested.value = true
+    toast.info('已取消批量导入，事务已回滚')
+  }
+}
+
+const pollBatchImportJob = async (jobId: string) => {
+  try {
+    const job = await studentsAPI.getBatchImportJob(jobId)
+    applyBatchImportJob(job)
+  } catch (error: any) {
+    stopBatchImportJobPolling()
+    stopBatchElapsedTimer()
+    isUploading.value = false
+    toast.error(error.message || '获取学生批量导入进度失败')
+  }
+}
+
+const startBatchImportJobPolling = (jobId: string) => {
+  stopBatchImportJobPolling()
+  batchImportJobPoller.value = window.setInterval(() => {
+    void pollBatchImportJob(jobId)
+  }, 1000)
+}
+
+const cancelBatchImport = async () => {
+  batchCancelRequested.value = true
+
+  if (batchImportJob.value && batchImportJob.value.status !== 'completed') {
+    try {
+      const job = await studentsAPI.cancelBatchImportJob(batchImportJob.value.id)
+      applyBatchImportJob(job)
+    } catch (error: any) {
+      toast.error(error.message || '取消批量导入失败')
+    }
+    return
+  }
+
+  batchImportController.value?.abort()
+}
+
 // 打开批量导入对话框
 const openBatchImportModal = () => {
   selectedFile.value = null
   importResults.value = null
+  resetBatchImportProgress()
   importAcademicYear.value = new Date().getFullYear().toString() // 重置为当前年份
   showBatchImportModal.value = true
 }
 
 // 处理文件选择
 const handleFileSelect = (event: Event) => {
+  if (isUploading.value) return
+
   const target = event.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
     selectedFile.value = target.files[0] || null
+    resetBatchImportProgress()
   }
 }
 
 // 处理拖拽进入
 const handleDragEnter = (event: DragEvent) => {
   event.preventDefault()
+  if (isUploading.value) return
   isDragging.value = true
 }
 
@@ -404,6 +624,7 @@ const handleDragOver = (event: DragEvent) => {
 const handleDrop = (event: DragEvent) => {
   event.preventDefault()
   isDragging.value = false
+  if (isUploading.value) return
 
   const files = event.dataTransfer?.files
   if (files && files.length > 0) {
@@ -417,6 +638,7 @@ const handleDrop = (event: DragEvent) => {
 
     if (validTypes.includes(file.type) || validExtensions.includes(fileExtension)) {
       selectedFile.value = file
+      resetBatchImportProgress()
     } else {
       toast.error('仅支持 .xlsx 和 .xls 格式的文件')
     }
@@ -430,6 +652,8 @@ const handleBatchImport = async () => {
     return
   }
 
+  const importFile = selectedFile.value
+
   if (!importAcademicYear.value) {
     toast.error('请输入学年')
     return
@@ -437,53 +661,64 @@ const handleBatchImport = async () => {
 
   try {
     isUploading.value = true
-    // 传递文件和学年参数
-    const result = await studentsAPI.batchImport(selectedFile.value, importAcademicYear.value)
+    resetBatchImportProgress()
+    batchUploadStartedAt.value = Date.now()
+    batchUploadTotalBytes.value = importFile.size
+    startBatchElapsedTimer()
+    const controller = new AbortController()
+    batchImportController.value = controller
 
-    // 确保 result 存在且有效
-    if (!result || typeof result !== 'object') {
-      console.error('批量导入返回数据异常:', result)
-      toast.error('批量导入失败：服务器返回数据异常')
+    const job = await studentsAPI.startBatchImport(importFile, importAcademicYear.value, {
+      signal: controller.signal,
+      onUploadProgress: updateBatchUploadProgress
+    })
+    batchUploadedBytes.value = batchUploadTotalBytes.value || importFile.size
+    applyBatchImportJob(job)
+    startBatchImportJobPolling(job.id)
+  } catch (error: any) {
+    if (isBatchRequestCanceled(error)) {
+      toast.info('已取消批量导入')
       return
     }
-
-    importResults.value = result
-
-    // 根据结果显示不同的提示
-    const { success = 0, failed = 0, warnings = 0 } = result
-    if (failed === 0 && warnings === 0) {
-      toast.success(`批量导入成功！共导入 ${success} 条数据`)
-    } else if (failed > 0 && success > 0) {
-      toast.warning(`批量导入完成，成功 ${success} 条，失败 ${failed} 条，请查看详情`)
-    } else if (failed > 0) {
-      toast.error(`批量导入失败，共 ${failed} 条数据存在问题，请查看详情`)
-    } else {
-      toast.warning(`批量导入完成，成功 ${success} 条，有 ${warnings} 条警告`)
-    }
-
-    // 只在有成功导入的数据时才重新加载列表
-    if (success > 0) {
-      loadData()
-    }
-  } catch (error: any) {
     console.error('批量导入错误:', error)
     toast.error(error.message || '批量导入失败')
   } finally {
-    isUploading.value = false
+    batchImportController.value = null
+    if (!batchImportJob.value || batchImportJob.value.status === 'failed' || batchImportJob.value.status === 'canceled') {
+      isUploading.value = false
+      stopBatchElapsedTimer()
+    }
   }
 }
 
 // 关闭批量导入对话框
 const closeBatchImportModal = () => {
+  if (isUploading.value) {
+    cancelBatchImport()
+    return
+  }
+
   showBatchImportModal.value = false
   selectedFile.value = null
   importResults.value = null
+  resetBatchImportProgress()
+}
+
+const prepareBatchReimport = () => {
+  importResults.value = null
+  resetBatchImportProgress()
 }
 
 // 初始化
 onMounted(() => {
   loadData()
   loadClasses()
+})
+
+onUnmounted(() => {
+  stopBatchImportJobPolling()
+  stopBatchElapsedTimer()
+  batchImportController.value?.abort()
 })
 </script>
 
@@ -513,27 +748,15 @@ onMounted(() => {
       <div class="bg-white rounded-lg shadow p-6 space-y-4">
         <!-- 搜索栏 -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Input
-            v-model="filters.name"
-            placeholder="搜索学生姓名"
-            @keyup.enter="handleSearch"
-          >
+          <Input v-model="filters.name" placeholder="搜索学生姓名" @keyup.enter="handleSearch">
             <template #icon>
               <MagnifyingGlassIcon class="h-5 w-5 text-gray-400" />
             </template>
           </Input>
 
-          <Input
-            v-model="filters.studentIdNational"
-            placeholder="搜索全国学籍号"
-            @keyup.enter="handleSearch"
-          />
+          <Input v-model="filters.studentIdNational" placeholder="搜索全国学籍号" @keyup.enter="handleSearch" />
 
-          <Input
-            v-model="filters.studentIdSchool"
-            placeholder="搜索学校学号"
-            @keyup.enter="handleSearch"
-          />
+          <Input v-model="filters.studentIdSchool" placeholder="搜索学校学号" @keyup.enter="handleSearch" />
 
           <div class="flex gap-2">
             <Button variant="primary" size="md" class="flex-1" @click="handleSearch">
@@ -553,18 +776,10 @@ onMounted(() => {
 
         <!-- 筛选器（可折叠） -->
         <div v-if="showFilters" class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t">
-          <Select
-            v-model="filters.gender"
-            :options="[{ label: '全部性别', value: '' }, ...genderOptions]"
-            label="性别"
-          />
+          <Select v-model="filters.gender" :options="[{ label: '全部性别', value: '' }, ...genderOptions]" label="性别" />
 
-          <Select
-            :model-value="filters.classId"
-            :options="[{ label: '全部班级', value: '' }, ...classOptions]"
-            label="班级"
-            @update:model-value="handleClassFilterChange"
-          />
+          <Select :model-value="filters.classId" :options="[{ label: '全部班级', value: '' }, ...classOptions]" label="班级"
+            @update:model-value="handleClassFilterChange" />
 
           <div class="flex items-end">
             <Button variant="secondary" size="md" class="w-full" @click="handleReset">
@@ -576,13 +791,8 @@ onMounted(() => {
 
       <!-- 学生列表 -->
       <div class="bg-white rounded-lg shadow">
-        <Table
-          :columns="columns"
-          :data="studentsStore.items"
-          :loading="studentsStore.loading"
-          clickable
-          @row-click="handleRowClick"
-        >
+        <Table :columns="columns" :data="studentsStore.items" :loading="studentsStore.loading" clickable
+          @row-click="handleRowClick">
           <!-- 性别列 -->
           <template #cell-gender="{ row }">
             <span :class="[
@@ -601,7 +811,7 @@ onMounted(() => {
           <!-- 当前班级列 -->
           <template #cell-currentClass="{ row }">
             <span v-if="row.currentClass">
-              {{ row.currentClass.cohort }} {{ row.currentClass.className }}
+              {{ formatHighSchoolClassName(row.currentClass.cohort, row.currentClass.className, schoolLevelLabel) }}
             </span>
             <span v-else class="text-gray-500">未分配</span>
           </template>
@@ -609,30 +819,18 @@ onMounted(() => {
           <!-- 操作列 -->
           <template #cell-actions="{ row }">
             <div class="flex items-center gap-2" @click.stop>
-              <button
-                type="button"
-                class="text-blue-600 hover:text-blue-800 transition-colors"
-                title="编辑"
-                @click="openEditModal(row)"
-              >
+              <button type="button" class="text-blue-600 hover:text-blue-800 transition-colors" title="编辑"
+                @click="openEditModal(row)">
                 <PencilIcon class="h-5 w-5" />
               </button>
 
-              <button
-                type="button"
-                class="text-green-600 hover:text-green-800 transition-colors"
-                title="转班"
-                @click="openTransferModal(row)"
-              >
+              <button type="button" class="text-green-600 hover:text-green-800 transition-colors" title="转班"
+                @click="openTransferModal(row)">
                 <ArrowsRightLeftIcon class="h-5 w-5" />
               </button>
 
-              <button
-                type="button"
-                class="text-red-600 hover:text-red-800 transition-colors"
-                title="删除"
-                @click="openDeleteModal(row)"
-              >
+              <button type="button" class="text-red-600 hover:text-red-800 transition-colors" title="删除"
+                @click="openDeleteModal(row)">
                 <TrashIcon class="h-5 w-5" />
               </button>
             </div>
@@ -640,14 +838,8 @@ onMounted(() => {
         </Table>
 
         <!-- 分页 -->
-        <Pagination
-          :current-page="pagination.page"
-          :total-pages="totalPages"
-          :total-items="studentsStore.total"
-          :page-size="pagination.pageSize"
-          @page-change="handlePageChange"
-          @size-change="handleSizeChange"
-        />
+        <Pagination :current-page="pagination.page" :total-pages="totalPages" :total-items="studentsStore.total"
+          :page-size="pagination.pageSize" @page-change="handlePageChange" @size-change="handleSizeChange" />
       </div>
     </div>
 
@@ -655,49 +847,23 @@ onMounted(() => {
     <Modal v-model="showCreateModal" title="创建学生" size="lg">
       <div class="space-y-4">
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.studentIdNational"
-            label="全国学籍号"
-            placeholder="请输入全国学籍号"
-            :error="formErrors.studentIdNational"
-          />
+          <Input v-model="formData.studentIdNational" label="全国学籍号" placeholder="请输入全国学籍号"
+            :error="formErrors.studentIdNational" />
 
-          <Input
-            v-model="formData.studentIdSchool"
-            label="学校学号"
-            placeholder="请输入学校学号"
-            :error="formErrors.studentIdSchool"
-          />
+          <Input v-model="formData.studentIdSchool" label="学校学号" placeholder="请输入学校学号"
+            :error="formErrors.studentIdSchool" />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.name"
-            label="姓名"
-            placeholder="请输入姓名"
-            :error="formErrors.name"
-          />
+          <Input v-model="formData.name" label="姓名" placeholder="请输入姓名" :error="formErrors.name" />
 
-          <Select
-            v-model="formData.gender"
-            :options="genderOptions"
-            label="性别"
-          />
+          <Select v-model="formData.gender" :options="genderOptions" label="性别" />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.birthDate"
-            type="text"
-            label="出生日期"
-            placeholder="YYYY-MM-DD"
-          />
+          <Input v-model="formData.birthDate" type="text" label="出生日期" placeholder="YYYY-MM-DD" />
 
-          <Input
-            v-model="formData.idCardNumber"
-            label="身份证号"
-            placeholder="请输入身份证号（可选）"
-          />
+          <Input v-model="formData.idCardNumber" label="身份证号" placeholder="请输入身份证号（可选）" />
         </div>
       </div>
 
@@ -717,49 +883,23 @@ onMounted(() => {
     <Modal v-model="showEditModal" title="编辑学生" size="lg">
       <div class="space-y-4">
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.studentIdNational"
-            label="全国学籍号"
-            placeholder="请输入全国学籍号"
-            :error="formErrors.studentIdNational"
-          />
+          <Input v-model="formData.studentIdNational" label="全国学籍号" placeholder="请输入全国学籍号"
+            :error="formErrors.studentIdNational" />
 
-          <Input
-            v-model="formData.studentIdSchool"
-            label="学校学号"
-            placeholder="请输入学校学号"
-            :error="formErrors.studentIdSchool"
-          />
+          <Input v-model="formData.studentIdSchool" label="学校学号" placeholder="请输入学校学号"
+            :error="formErrors.studentIdSchool" />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.name"
-            label="姓名"
-            placeholder="请输入姓名"
-            :error="formErrors.name"
-          />
+          <Input v-model="formData.name" label="姓名" placeholder="请输入姓名" :error="formErrors.name" />
 
-          <Select
-            v-model="formData.gender"
-            :options="genderOptions"
-            label="性别"
-          />
+          <Select v-model="formData.gender" :options="genderOptions" label="性别" />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <Input
-            v-model="formData.birthDate"
-            type="text"
-            label="出生日期"
-            placeholder="YYYY-MM-DD"
-          />
+          <Input v-model="formData.birthDate" type="text" label="出生日期" placeholder="YYYY-MM-DD" />
 
-          <Input
-            v-model="formData.idCardNumber"
-            label="身份证号"
-            placeholder="请输入身份证号（可选）"
-          />
+          <Input v-model="formData.idCardNumber" label="身份证号" placeholder="请输入身份证号（可选）" />
         </div>
       </div>
 
@@ -815,21 +955,11 @@ onMounted(() => {
         </div>
 
         <!-- 目标班级（用户选择） -->
-        <Select
-          :model-value="transferFormData.toClassId"
-          :options="classOptions"
-          label="目标班级 *"
-          placeholder="请选择目标班级"
-          @update:model-value="handleTransferToClassChange"
-        />
+        <Select :model-value="transferFormData.toClassId" :options="classOptions" label="目标班级 *" placeholder="请选择目标班级"
+          @update:model-value="handleTransferToClassChange" />
 
         <!-- 学年（简化格式） -->
-        <Input
-          v-model="transferFormData.academicYear"
-          type="number"
-          label="学年 *"
-          placeholder="例如：2024"
-        />
+        <Input v-model="transferFormData.academicYear" type="number" label="学年 *" placeholder="例如：2024" />
       </div>
 
       <template #footer>
@@ -848,64 +978,62 @@ onMounted(() => {
     <Modal v-model="showBatchImportModal" title="批量导入学生" size="lg" @close="closeBatchImportModal">
       <div class="space-y-4">
         <!-- 导入中状态 -->
-        <div v-if="isUploading" class="flex flex-col items-center justify-center py-12">
-          <div class="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600"></div>
-          <p class="mt-4 text-lg font-medium text-gray-900">正在导入数据...</p>
-          <p class="mt-2 text-sm text-gray-500">请稍候，正在处理您的文件</p>
+        <div v-if="isUploading" class="rounded-lg border border-blue-100 bg-blue-50 p-4 text-blue-800">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-blue-900">
+                {{ batchImportJob ? batchImportJob.message : '上传中' }}
+              </div>
+              <div class="mt-1 truncate text-sm">{{ batchCurrentText }}</div>
+            </div>
+            <div class="shrink-0 text-lg font-bold text-blue-900">{{ batchDisplayProgress }}%</div>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            <span>预计剩余：{{ batchRemainingText }} / {{ batchElapsedText }}</span>
+            <span>已上传：{{ formatFileSize(batchUploadedBytes) }} / {{ formatFileSize(batchUploadTotalBytes) }}</span>
+          </div>
+          <div class="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
+            <div class="h-full rounded-full bg-blue-600 transition-all duration-500"
+              :style="{ width: `${batchDisplayProgress}%` }" />
+          </div>
         </div>
 
         <!-- 导入结果 -->
         <div v-else-if="importResults" class="space-y-4">
           <!-- 总体状态提示 -->
-          <div
-            :class="[
-              'rounded-lg p-4 border-l-4',
-              importResults.failed === 0 && importResults.warnings === 0
-                ? 'bg-green-50 border-green-500'
-                : importResults.failed > 0
+          <div :class="[
+            'rounded-lg p-4 border-l-4',
+            importResults.failed === 0 && importResults.warnings === 0
+              ? 'bg-green-50 border-green-500'
+              : importResults.failed > 0
                 ? 'bg-red-50 border-red-500'
                 : 'bg-yellow-50 border-yellow-500'
-            ]"
-          >
+          ]">
             <div class="space-y-2">
               <div class="flex items-center gap-2">
-                <svg
-                  v-if="importResults.failed === 0 && importResults.warnings === 0"
-                  class="h-5 w-5 text-green-500 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg v-if="importResults.failed === 0 && importResults.warnings === 0"
+                  class="h-5 w-5 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <svg
-                  v-else-if="importResults.failed > 0"
-                  class="h-5 w-5 text-red-500 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg v-else-if="importResults.failed > 0" class="h-5 w-5 text-red-500 flex-shrink-0" fill="none"
+                  viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <svg
-                  v-else
-                  class="h-5 w-5 text-yellow-500 flex-shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                <svg v-else class="h-5 w-5 text-yellow-500 flex-shrink-0" fill="none" viewBox="0 0 24 24"
+                  stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <h3
-                  :class="[
-                    'text-sm font-semibold',
-                    importResults.failed === 0 && importResults.warnings === 0
-                      ? 'text-green-800'
-                      : importResults.failed > 0
+                <h3 :class="[
+                  'text-sm font-semibold',
+                  importResults.failed === 0 && importResults.warnings === 0
+                    ? 'text-green-800'
+                    : importResults.failed > 0
                       ? 'text-red-800'
                       : 'text-yellow-800'
-                  ]"
-                >
+                ]">
                   <template v-if="importResults.failed === 0 && importResults.warnings === 0">
                     导入完成，所有数据成功导入！
                   </template>
@@ -920,17 +1048,17 @@ onMounted(() => {
                   </template>
                 </h3>
               </div>
-              <div
-                :class="[
-                  'text-sm',
-                  importResults.failed === 0 && importResults.warnings === 0
-                    ? 'text-green-700'
-                    : importResults.failed > 0
+              <div :class="[
+                'text-sm',
+                importResults.failed === 0 && importResults.warnings === 0
+                  ? 'text-green-700'
+                  : importResults.failed > 0
                     ? 'text-red-700'
                     : 'text-yellow-700'
-                ]"
-              >
-                共处理 {{ importResults.success + importResults.failed }} 条数据，成功 {{ importResults.success }} 条<template v-if="importResults.failed > 0">，失败 {{ importResults.failed }} 条</template><template v-if="importResults.warnings > 0">，警告 {{ importResults.warnings }} 条</template>
+              ]">
+                共处理 {{ importResults.success + importResults.failed }} 条数据，成功 {{ importResults.success }} 条<template
+                  v-if="importResults.failed > 0">，失败 {{ importResults.failed }} 条</template><template
+                  v-if="importResults.warnings > 0">，警告 {{ importResults.warnings }} 条</template>
               </div>
             </div>
           </div>
@@ -962,24 +1090,18 @@ onMounted(() => {
               </span>
             </div>
             <div class="max-h-64 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-3 bg-gray-50">
-              <div
-                v-for="(error, index) in importResults.errors.slice(0, 50)"
-                :key="index"
-                :class="[
-                  'p-3 rounded-md text-sm',
-                  error.type === 'warning'
-                    ? 'bg-yellow-50 border-l-4 border-l-yellow-400'
-                    : 'bg-red-50 border-l-4 border-l-red-400'
-                ]"
-              >
+              <div v-for="(error, index) in importResults.errors.slice(0, 50)" :key="index" :class="[
+                'p-3 rounded-md text-sm',
+                error.type === 'warning'
+                  ? 'bg-yellow-50 border-l-4 border-l-yellow-400'
+                  : 'bg-red-50 border-l-4 border-l-red-400'
+              ]">
                 <div class="space-y-1">
                   <div class="flex items-start gap-2">
-                    <span
-                      :class="[
-                        'inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0',
-                        error.type === 'warning' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-                      ]"
-                    >
+                    <span :class="[
+                      'inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0',
+                      error.type === 'warning' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                    ]">
                       {{ error.type === 'warning' ? '警告' : '错误' }}
                     </span>
                     <div :class="[error.type === 'warning' ? 'text-yellow-900' : 'text-red-900']">
@@ -1004,7 +1126,7 @@ onMounted(() => {
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <h3 class="text-sm font-semibold text-blue-900 mb-2">Excel 格式要求：</h3>
             <ul class="text-sm text-blue-800 space-y-1 list-disc list-inside">
-              <li><strong>班级名称</strong>：格式为"高中2024级1班"（必填）</li>
+              <li><strong>班级名称</strong>：格式为"{{ schoolLevelLabel }}2024级1班"（必填）</li>
               <li><strong>学籍号</strong>：全国学籍号，支持英文字符（必填）</li>
               <li><strong>民族代码</strong>：数字代码（可选）</li>
               <li><strong>姓名</strong>：学生姓名（必填）</li>
@@ -1017,43 +1139,35 @@ onMounted(() => {
           <!-- 学年输入 -->
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div class="flex items-start gap-3">
-              <svg class="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <svg class="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24"
+                stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <div class="flex-1">
                 <label class="block text-sm font-medium text-blue-900 mb-2">
                   导入数据所属学年<span class="text-red-500">*</span>
                 </label>
-                <input
-                  v-model="importAcademicYear"
-                  type="text"
-                  placeholder="例如：2024"
-                  class="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+                <input v-model="importAcademicYear" type="text" placeholder="例如：2024"
+                  class="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                 <p class="mt-2 text-xs text-blue-700">
                   请输入导入数据所属的学年。例如：2024 表示学生在 2024 学年所在的班级
                 </p>
                 <p class="mt-1 text-xs text-blue-600">
-                  <strong>说明：</strong>班级名称"高中2023级1班"中的"2023"是入学年份（级别），学年是学生在该班级学习的年份
+                  <strong>说明：</strong>班级名称"{{ schoolLevelLabel }}2023级1班"中的"2023"是入学年份（级别），学年是学生在该班级学习的年份
                 </p>
               </div>
             </div>
           </div>
 
           <!-- 文件上传区域 -->
-          <div
-            :class="[
-              'border-2 border-dashed rounded-lg p-12 text-center transition-all cursor-pointer',
-              isDragging
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-            ]"
-            @dragenter="handleDragEnter"
-            @dragleave="handleDragLeave"
-            @dragover="handleDragOver"
-            @drop="handleDrop"
-            @click="() => $refs.fileInput && ($refs.fileInput as HTMLInputElement).click()"
-          >
+          <div :class="[
+            'border-2 border-dashed rounded-lg p-12 text-center transition-all cursor-pointer',
+            isDragging
+              ? 'border-blue-500 bg-blue-50'
+              : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+          ]" @dragenter="handleDragEnter" @dragleave="handleDragLeave" @dragover="handleDragOver" @drop="handleDrop"
+            @click="() => $refs.fileInput && ($refs.fileInput as HTMLInputElement).click()">
             <ArrowUpTrayIcon :class="[
               'mx-auto h-16 w-16 transition-colors',
               isDragging ? 'text-blue-500' : 'text-gray-400'
@@ -1069,17 +1183,13 @@ onMounted(() => {
                 支持 .xlsx 和 .xls 格式，文件大小不超过 5MB
               </p>
             </div>
-            <input
-              ref="fileInput"
-              type="file"
-              class="hidden"
-              accept=".xlsx,.xls"
-              @change="handleFileSelect"
-              @click.stop
-            />
-            <div v-if="selectedFile" class="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 rounded-lg">
+            <input ref="fileInput" type="file" class="hidden" accept=".xlsx,.xls" @change="handleFileSelect"
+              @click.stop />
+            <div v-if="selectedFile"
+              class="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 rounded-lg">
               <svg class="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span class="text-sm font-medium text-green-800">{{ selectedFile.name }}</span>
               <span class="text-xs text-green-600">({{ (selectedFile.size / 1024).toFixed(1) }} KB)</span>
@@ -1091,22 +1201,13 @@ onMounted(() => {
       <template #footer>
         <div class="flex justify-end gap-3">
           <Button variant="secondary" @click="closeBatchImportModal">
-            关闭
+            {{ isUploading ? '取消导入' : '关闭' }}
           </Button>
-          <Button
-            v-if="!importResults"
-            variant="primary"
-            :loading="isUploading"
-            :disabled="!selectedFile || isUploading"
-            @click="handleBatchImport"
-          >
+          <Button v-if="!importResults" variant="primary" :loading="isUploading"
+            :disabled="!selectedFile || isUploading" @click="handleBatchImport">
             {{ isUploading ? '导入中...' : '开始导入' }}
           </Button>
-          <Button
-            v-else
-            variant="primary"
-            @click="importResults = null"
-          >
+          <Button v-else variant="primary" @click="prepareBatchReimport">
             重新导入
           </Button>
         </div>

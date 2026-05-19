@@ -7,6 +7,69 @@ import type {
   PaginatedResponse
 } from '@/types'
 
+export interface StudentBatchImportRequestOptions {
+  signal?: AbortSignal
+  onUploadProgress?: (payload: {
+    progress: number
+    loaded: number
+    total: number
+    rate?: number
+    estimated?: number
+  }) => void
+}
+
+export type StudentBatchImportJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'canceling'
+  | 'canceled'
+
+export interface StudentBatchImportResult {
+  success: number
+  failed: number
+  warnings: number
+  errors: Array<{
+    row: number
+    error: string
+    data: any
+    type: 'error' | 'warning'
+  }>
+}
+
+export interface StudentBatchImportJob {
+  id: string
+  status: StudentBatchImportJobStatus
+  fileName: string
+  academicYear: string
+  totalRows: number
+  processedRows: number
+  progress: number
+  startedAt: string
+  updatedAt: string
+  completedAt?: string
+  estimatedSecondsRemaining: number | null
+  currentRow?: number
+  message: string
+  result?: StudentBatchImportResult
+  error?: string
+}
+
+const createUploadProgressHandler = (requestOptions?: StudentBatchImportRequestOptions) => {
+  return (event: any) => {
+    if (event.total && requestOptions?.onUploadProgress) {
+      requestOptions.onUploadProgress({
+        progress: Math.round((event.loaded / event.total) * 100),
+        loaded: event.loaded,
+        total: event.total,
+        rate: event.rate,
+        estimated: event.estimated
+      })
+    }
+  }
+}
+
 /**
  * 学生管理 API
  */
@@ -78,16 +141,43 @@ const studentsAPI = {
    * @param file Excel文件
    * @param academicYear 学年
    */
-  batchImport(file: File, academicYear: string): Promise<any> {
+  batchImport(file: File, academicYear: string, requestOptions?: StudentBatchImportRequestOptions): Promise<any> {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('academicYear', academicYear)
 
     return http.post('/students/batch-import', formData, {
+      timeout: 0,
       headers: {
         'Content-Type': 'multipart/form-data'
-      }
+      },
+      signal: requestOptions?.signal,
+      onUploadProgress: createUploadProgressHandler(requestOptions)
     })
+  },
+
+  startBatchImport(file: File, academicYear: string, requestOptions?: StudentBatchImportRequestOptions): Promise<StudentBatchImportJob> {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('academicYear', academicYear)
+    formData.append('asyncImport', 'true')
+
+    return http.post('/students/batch-import', formData, {
+      timeout: 0,
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      signal: requestOptions?.signal,
+      onUploadProgress: createUploadProgressHandler(requestOptions)
+    })
+  },
+
+  getBatchImportJob(jobId: string): Promise<StudentBatchImportJob> {
+    return http.get(`/students/batch-import/jobs/${jobId}`)
+  },
+
+  cancelBatchImportJob(jobId: string): Promise<StudentBatchImportJob> {
+    return http.post(`/students/batch-import/jobs/${jobId}/cancel`)
   }
 }
 

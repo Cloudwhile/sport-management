@@ -15,7 +15,6 @@ interface TeamMember {
   githubUrl?: string // GitHub 链接（可选）
 }
 
-
 const teamMembers: TeamMember[] = [
   {
     name: 'AptS:1547',
@@ -29,7 +28,7 @@ const teamMembers: TeamMember[] = [
   {
     name: 'Cloudwhile',
     role: '全栈工程师',
-    email: 'whitecat.this@gmail.com',
+    email: 'sylvia@icetowne.com',
     gravatarEmail: 'linjunhao41@gmail.com',
     description: '负责算法设计与后端开发',
     blogUrl: 'https://icetowne.com',
@@ -49,10 +48,7 @@ const getGravatarUrl = (email: string, size: number = 200): string => {
   // 使用 MD5 哈希邮箱地址
   const emailLower = email.toLowerCase().trim()
   const hash = MD5(emailLower).toString()
-  if (email.indexOf("linjunhao41") !== -1) {
-    const hash = sha256(email).toString()
-  }
-  return `https://cravatar.cn/avatar/${hash}?s=${size}&d=identicon`
+  return `https://gravatar.loli.net/avatar/${hash}?s=${size}&d=identicon`
 }
 </script>
 

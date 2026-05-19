@@ -12,6 +12,7 @@ import {
   DocumentTextIcon,
   ClipboardDocumentListIcon,
   ChartBarIcon,
+  CloudArrowUpIcon,
   Cog6ToothIcon,
   InformationCircleIcon
 } from '@heroicons/vue/24/outline'
@@ -23,6 +24,7 @@ import {
   DocumentTextIcon as DocumentTextIconSolid,
   ClipboardDocumentListIcon as ClipboardDocumentListIconSolid,
   ChartBarIcon as ChartBarIconSolid,
+  CloudArrowUpIcon as CloudArrowUpIconSolid,
   Cog6ToothIcon as Cog6ToothIconSolid,
   InformationCircleIcon as InformationCircleIconSolid
 } from '@heroicons/vue/24/solid'
@@ -107,6 +109,13 @@ const allMenuItems: MenuItem[] = [
     icon: ChartBarIcon,
     iconSolid: ChartBarIconSolid,
     roles: [UserRole.ADMIN, UserRole.TEACHER]
+  },
+  {
+    name: 'CompleteDataImport',
+    label: '完整导入',
+    icon: CloudArrowUpIcon,
+    iconSolid: CloudArrowUpIconSolid,
+    roles: [UserRole.ADMIN]
   },
   {
     name: 'SystemSettings',
