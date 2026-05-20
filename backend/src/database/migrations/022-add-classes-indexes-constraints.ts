@@ -45,13 +45,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   `);
 };
 
-export const down: MigrationFn<MigrationContext> = async (params) => {
-  const { queryInterface } = params.context;
-
-  await queryInterface.sequelize.query(
-    `ALTER TABLE classes DROP CONSTRAINT IF EXISTS ${INDEXES.uniqueClassName}`,
-  );
-  await queryInterface.sequelize.query(
-    `DROP INDEX IF EXISTS ${INDEXES.cohort}`,
-  );
+export const down: MigrationFn<MigrationContext> = async (_params) => {
+  // No-op: these names may belong to constraints/indexes created by earlier migrations.
+  // Dropping them here would make rollback destructive for existing databases.
 };

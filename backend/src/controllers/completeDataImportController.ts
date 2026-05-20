@@ -285,12 +285,28 @@ const parseSheetSelections = (req: Request): Map<string, SheetSelection> => {
       throw new Error("sheetSelections must be an array");
     }
 
-    return new Map(
-      selections
-        .filter((selection) => selection.fileKey)
-        .map((selection) => [selection.fileKey, selection]),
+    const invalidSelection = selections.find(
+      (selection) =>
+        !selection ||
+        typeof selection !== "object" ||
+        typeof selection.fileKey !== "string" ||
+        !selection.fileKey.trim(),
     );
-  } catch {
+
+    if (invalidSelection) {
+      throw new CompleteDataImportBadRequestError(
+        "sheetSelections 中每个文件选择都必须包含 fileKey",
+      );
+    }
+
+    return new Map(
+      selections.map((selection) => [selection.fileKey, selection]),
+    );
+  } catch (error) {
+    if (error instanceof CompleteDataImportBadRequestError) {
+      throw error;
+    }
+
     throw new CompleteDataImportBadRequestError("sheetSelections 格式无效");
   }
 };

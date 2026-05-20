@@ -84,6 +84,12 @@ const getRuntimeDirname = () => {
   return dirname(fileURLToPath(import.meta.url));
 };
 const __runtimeDirname = getRuntimeDirname();
+const getWritableRuntimeDirname = () => {
+  const isPackagedExecutable = Boolean(
+    (process as NodeJS.Process & { pkg?: unknown }).pkg,
+  );
+  return isPackagedExecutable ? path.dirname(process.execPath) : __runtimeDirname;
+};
 
 const setupSwagger = async () => {
   if (config.app.env === "production") return;
@@ -120,7 +126,7 @@ app.use("/api/complete-data-import", completeDataImportRoutes);
 import path from "path";
 
 const setupFrontendRoutes = () => {
-  const uploadsPath = path.resolve(process.cwd(), "uploads");
+  const uploadsPath = path.join(getWritableRuntimeDirname(), "uploads");
   app.use("/uploads", express.static(uploadsPath));
   // 生产环境：从 dist/frontend 读取
   // 开发环境：从 ../../frontend/dist 读取

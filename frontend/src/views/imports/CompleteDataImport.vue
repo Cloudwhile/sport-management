@@ -983,7 +983,15 @@ const clearImportState = () => {
   resetPreviewState()
 }
 
+const cancelRunningImportJobOnUnmount = () => {
+  const job = importJob.value
+  if (!job || (job.status !== 'queued' && job.status !== 'running')) return
+
+  void completeDataImportAPI.cancelImportJob(job.id).catch(() => undefined)
+}
+
 onUnmounted(() => {
+  cancelRunningImportJobOnUnmount()
   stopImportJobPolling()
   activeRequestController.value?.abort()
   activeRequestController.value = null

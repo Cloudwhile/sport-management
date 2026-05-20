@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { Class } from '../models/index.js';
 import bcrypt from 'bcryptjs';
-import { Op } from 'sequelize';
+import { Op, UniqueConstraintError } from 'sequelize';
 import {
   calculateGradeLevel,
   getCurrentAcademicYear,
@@ -10,6 +10,24 @@ import {
   isValidCohort,
 } from '../utils/gradeHelper.js';
 import { extractClassNumberFromClassName, normalizeClassName } from '../utils/classNameFormatter.js';
+
+const isClassAccountUniqueConstraintError = (error: unknown): boolean => {
+  const hasClassAccountPath =
+    error instanceof UniqueConstraintError &&
+    error.errors.some((item) =>
+      ['classAccount', 'class_account'].includes(String(item.path)),
+    );
+
+  const rawError = error as { name?: string; message?: string; parent?: { constraint?: string } };
+  const message = rawError.message || '';
+  const constraint = rawError.parent?.constraint || '';
+
+  return (
+    hasClassAccountPath ||
+    (rawError.name === 'SequelizeUniqueConstraintError' &&
+      /classAccount|class_account|classes_class_account/i.test(`${message} ${constraint}`))
+  );
+};
 
 /**
  * 班级控制器（基于cohort设计）
@@ -361,7 +379,19 @@ class ClassController {
         }
       }
 
-      await classData.update(updateData);
+      try {
+        await classData.update(updateData);
+      } catch (error) {
+        if (isClassAccountUniqueConstraintError(error)) {
+          res.status(409).json({
+            success: false,
+            error: '班级账号已存在',
+          });
+          return;
+        }
+
+        throw error;
+      }
 
       // 重新查询并添加年级信息
       const updatedClass = await Class.findByPk(id);

@@ -16,26 +16,27 @@ const formatTimestamp = () => {
   return shiftedDate.toISOString().slice(0, 23).replace("T", " ");
 };
 
-const formatDetail = (value: unknown): string => {
+const inspectOptions = {
+  depth: 6,
+  colors: false,
+  breakLength: Infinity,
+  compact: true,
+};
+
+const normalizeDetail = (value: unknown): unknown => {
   if (value instanceof Error) {
     return value.stack || value.message;
   }
 
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return util.inspect(value, {
-    depth: 6,
-    colors: false,
-    breakLength: Infinity,
-    compact: true,
-  });
+  return value;
 };
 
 const writeLog = (level: LogLevel, details: unknown[]) => {
   const timestamp = formatTimestamp();
-  const message = details.length > 0 ? details.map(formatDetail).join(" ") : "";
+  const message =
+    details.length > 0
+      ? util.formatWithOptions(inspectOptions, ...details.map(normalizeDetail))
+      : "";
   process.stdout.write(`${timestamp} [${level}]: ${message}\n`);
 };
 

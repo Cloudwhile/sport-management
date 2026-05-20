@@ -41,7 +41,7 @@ async function main() {
         break;
 
       case 'status':
-      case 'pending':
+      case 'pending': {
         console.log(`${typeName}状态:\n`);
         const pending = await executor.pending();
         const executed = await executor.executed();
@@ -52,12 +52,14 @@ async function main() {
         console.log(`\n待执行 (${pending.length}):`);
         pending.forEach((m) => console.log(`  待执行 ${m.name}`));
         break;
+      }
 
-      case 'executed':
+      case 'executed': {
         const executedList = await executor.executed();
         console.log(`已执行的${typeName} (${executedList.length}):`);
         executedList.forEach((m) => console.log(`  已执行 ${m.name}`));
         break;
+      }
 
       default:
         console.log(`

@@ -32,7 +32,11 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       `
         INSERT INTO settings (key, value, description, category, is_public, created_at, updated_at)
         VALUES (:key, :value, :description, :category, :is_public, :created_at, :updated_at)
-        ON CONFLICT (key) DO NOTHING
+        ON CONFLICT (key) DO UPDATE SET
+          description = EXCLUDED.description,
+          category = EXCLUDED.category,
+          is_public = EXCLUDED.is_public,
+          updated_at = EXCLUDED.updated_at
       `,
       { replacements: setting },
     );

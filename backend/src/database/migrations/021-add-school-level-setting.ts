@@ -1,6 +1,5 @@
 import type { MigrationFn } from 'umzug';
 import type { MigrationContext } from '../umzug.js';
-import { Op } from 'sequelize';
 
 const setting = {
   key: 'school_level',
@@ -26,15 +25,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   );
 };
 
-export const down: MigrationFn<MigrationContext> = async (params) => {
-  const { context } = params;
-  const { queryInterface } = context;
-
-  await queryInterface.bulkDelete('settings', {
-    [Op.and]: [
-      { key: setting.key },
-      { value: setting.value },
-      { category: setting.category },
-    ],
-  });
+export const down: MigrationFn<MigrationContext> = async (_params) => {
+  // No-op: up may skip the insert when school_level already exists.
+  // Blind deletion here could remove pre-existing user configuration.
 };

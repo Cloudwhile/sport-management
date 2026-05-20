@@ -239,6 +239,18 @@ const fetchRecords = (where: any) => {
   });
 };
 
+const getParticipatingCohorts = (form: any): string[] => {
+  return Array.isArray(form.participatingCohorts)
+    ? form.participatingCohorts.map((cohort: unknown) => String(cohort))
+    : [];
+};
+
+const isRecordParticipatingInForm = (record: any, form: any): boolean => {
+  const cohort = record.class?.cohort;
+  if (!cohort) return false;
+  return getParticipatingCohorts(form).includes(String(cohort));
+};
+
 const getClassIdsForGrade = async (gradeLevel: number, academicYear: string) => {
   const cohort = getCohortFromGradeLevel(gradeLevel, academicYear);
   if (!cohort) return [];
@@ -332,12 +344,15 @@ const buildTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { 
   });
   const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
   const formIds = forms.map(form => form.id);
+  const formsById = new Map(forms.map(form => [Number(form.id), form]));
   const allRecords = formIds.length > 0
     ? await fetchRecords({ formId: { [Op.in]: formIds } })
     : [];
   const recordsByFormId = new Map<number, any[]>();
   allRecords.forEach(record => {
     const key = Number(record.formId);
+    const form = formsById.get(key);
+    if (!form || !isRecordParticipatingInForm(record, form)) return;
     if (!recordsByFormId.has(key)) recordsByFormId.set(key, []);
     recordsByFormId.get(key).push(record);
   });
@@ -383,7 +398,7 @@ const buildTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { 
   const allData = [];
   const cohortData = new Map<string, number[]>();
   const allCohorts = new Set<string>();
-  forms.forEach(form => (form.participatingCohorts || []).forEach((cohort: string) => allCohorts.add(cohort)));
+  forms.forEach(form => getParticipatingCohorts(form).forEach(cohort => allCohorts.add(cohort)));
 
   for (const form of forms) {
     const records = recordsByFormId.get(Number(form.id)) || [];
@@ -434,7 +449,7 @@ const getScopedRecordsAndTotal = async (form: any, scope: 'school' | 'grade' | '
 
   const allClasses = await Class.findAll();
   const participatingClasses = allClasses.filter(cls => {
-    return form.participatingCohorts && form.participatingCohorts.includes(cls.cohort);
+    return getParticipatingCohorts(form).includes(String(cls.cohort));
   });
   const classIds = participatingClasses.map(item => item.id);
   const records = classIds.length > 0
@@ -791,7 +806,7 @@ export const getFormStats = async (req: Request, res: Response) => {
 
     const allClasses = await Class.findAll();
     const participatingClasses = allClasses.filter(cls => {
-      return form.participatingCohorts && form.participatingCohorts.includes(cls.cohort);
+      return getParticipatingCohorts(form).includes(String(cls.cohort));
     });
     const classIds = participatingClasses.map(item => item.id);
     const records = await fetchRecords({ formId, classId: { [Op.in]: classIds } });
