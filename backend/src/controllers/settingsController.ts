@@ -38,6 +38,37 @@ const IMAGE_MIME_EXTENSIONS: Record<string, string> = {
   'image/vnd.microsoft.icon': '.ico',
 };
 
+const SETTINGS_UPLOAD_URL_PREFIX = '/uploads/settings/';
+
+const getSettingsUploadDir = () => path.resolve(process.cwd(), 'uploads', 'settings');
+
+const getUploadedSettingFilePath = (url: string) => {
+  const normalizedUrl = String(url || '');
+  if (!normalizedUrl.startsWith(SETTINGS_UPLOAD_URL_PREFIX)) return null;
+
+  const fileName = normalizedUrl.slice(SETTINGS_UPLOAD_URL_PREFIX.length);
+  if (!fileName || fileName !== path.basename(fileName)) return null;
+
+  const uploadDir = getSettingsUploadDir();
+  const filePath = path.resolve(uploadDir, fileName);
+  if (!filePath.startsWith(`${uploadDir}${path.sep}`)) return null;
+
+  return filePath;
+};
+
+const deleteUploadedSettingImage = async (previousUrl: string, nextUrl = '') => {
+  if (String(previousUrl || '') === String(nextUrl || '')) return;
+
+  const filePath = getUploadedSettingFilePath(previousUrl);
+  if (!filePath) return;
+
+  await fs.unlink(filePath).catch((error: any) => {
+    if (error?.code !== 'ENOENT') {
+      console.warn('Failed to delete old setting image:', error);
+    }
+  });
+};
+
 const getKnownSettingDefaults = (key: string) => {
   if (APPEARANCE_SETTINGS[key]) return { key, value: '', ...APPEARANCE_SETTINGS[key] };
   if (SYSTEM_SETTINGS[key]) return { key, ...SYSTEM_SETTINGS[key] };
@@ -73,7 +104,7 @@ export const uploadSettingImage = async (req: Request, res: Response) => {
       });
     }
 
-    const uploadDir = path.resolve(process.cwd(), 'uploads', 'settings');
+    const uploadDir = getSettingsUploadDir();
     await fs.mkdir(uploadDir, { recursive: true });
 
     const fileName = `${key}-${randomUUID()}${extension}`;
@@ -92,10 +123,7 @@ export const uploadSettingImage = async (req: Request, res: Response) => {
     const previousUrl = String(setting.get('value') || '');
     await setting.update({ value: publicUrl });
 
-    if (previousUrl.startsWith('/uploads/settings/') && previousUrl !== publicUrl) {
-      const oldFilePath = path.join(uploadDir, path.basename(previousUrl));
-      void fs.unlink(oldFilePath).catch(() => undefined);
-    }
+    await deleteUploadedSettingImage(previousUrl, publicUrl);
 
     res.json({
       success: true,
@@ -269,7 +297,10 @@ export const updateSetting = async (req: Request, res: Response) => {
       });
     }
 
-    await setting.update({ value });
+    const previousValue = String(setting.get('value') || '');
+    const nextValue = String(value);
+    await setting.update({ value: nextValue });
+    await deleteUploadedSettingImage(previousValue, nextValue);
 
     res.json({
       success: true,
@@ -306,7 +337,10 @@ export const batchUpdateSettings = async (req: Request, res: Response) => {
     const updatePromises = Object.entries(settings).map(async ([key, value]) => {
       const setting = await Setting.findOne({ where: { key } });
       if (setting) {
-        await setting.update({ value: value as string });
+        const previousValue = String(setting.get('value') || '');
+        const nextValue = String(value ?? '');
+        await setting.update({ value: nextValue });
+        await deleteUploadedSettingImage(previousValue, nextValue);
       }
     });
 
