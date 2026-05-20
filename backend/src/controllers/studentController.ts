@@ -928,9 +928,13 @@ export const batchImport = async (req: Request, res: Response): Promise<void> =>
     }
 
     if (req.body.asyncImport?.toString() === 'true') {
-      const job = createStudentBatchImportJob(getDisplayFileName(req.file), academicYear, 0);
+      const asyncFile = {
+        ...req.file,
+        buffer: Buffer.from(req.file.buffer),
+      };
+      const job = createStudentBatchImportJob(getDisplayFileName(asyncFile), academicYear, 0);
       res.status(202).json({ data: toStudentBatchImportJobSnapshot(job) });
-      void runStudentBatchImportJob(job.id, req.file, academicYear);
+      void runStudentBatchImportJob(job.id, asyncFile, academicYear);
       return;
     }
 

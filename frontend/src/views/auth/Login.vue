@@ -14,10 +14,11 @@
       <div class="w-full max-w-md space-y-8">
         <div class="text-center">
           <img
-            v-if="siteLogoUrl"
+            v-if="showSiteLogo"
             :src="siteLogoUrl"
             :alt="appTitle"
             class="mx-auto h-20 max-w-64 object-contain"
+            @error="siteLogoLoadFailed = true"
           />
           <BuildingLibraryIcon v-else class="mx-auto h-14 w-14 text-indigo-600" />
 
@@ -136,7 +137,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores'
@@ -149,7 +150,13 @@ const settingsStore = useSettingsStore()
 const appTitle = computed(() => settingsStore.appTitle)
 const siteLogoUrl = computed(() => settingsStore.siteLogoUrl)
 const homeImageUrl = computed(() => settingsStore.homeImageUrl)
+const siteLogoLoadFailed = ref(false)
+const showSiteLogo = computed(() => Boolean(siteLogoUrl.value) && !siteLogoLoadFailed.value)
 const todayYear = new Date().getFullYear()
+
+watch(siteLogoUrl, () => {
+  siteLogoLoadFailed.value = false
+})
 
 const formData = reactive({
   username: '',

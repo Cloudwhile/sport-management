@@ -32,11 +32,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       `
         INSERT INTO settings (key, value, description, category, is_public, created_at, updated_at)
         VALUES (:key, :value, :description, :category, :is_public, :created_at, :updated_at)
-        ON CONFLICT (key) DO UPDATE SET
-          description = EXCLUDED.description,
-          category = EXCLUDED.category,
-          is_public = EXCLUDED.is_public,
-          updated_at = EXCLUDED.updated_at
+        ON CONFLICT (key) DO NOTHING
       `,
       { replacements: setting },
     );
@@ -48,6 +44,10 @@ export const down: MigrationFn<MigrationContext> = async (params) => {
   const { queryInterface } = context;
 
   await queryInterface.bulkDelete('settings', {
-    key: { [Op.in]: settings.map(setting => setting.key) },
+    [Op.and]: [
+      { key: { [Op.in]: settings.map(setting => setting.key) } },
+      { value: { [Op.in]: settings.map(setting => setting.value) } },
+      { category: 'appearance' },
+    ],
   });
 };

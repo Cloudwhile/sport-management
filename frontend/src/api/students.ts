@@ -148,9 +148,6 @@ const studentsAPI = {
 
     return http.post('/students/batch-import', formData, {
       timeout: 0,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       signal: requestOptions?.signal,
       onUploadProgress: createUploadProgressHandler(requestOptions)
     })
@@ -164,9 +161,6 @@ const studentsAPI = {
 
     return http.post('/students/batch-import', formData, {
       timeout: 0,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       signal: requestOptions?.signal,
       onUploadProgress: createUploadProgressHandler(requestOptions)
     })

@@ -3,8 +3,9 @@ import http from '@/utils/http'
 export interface CompleteDataImportOptions {
   formName: string
   academicYear: string
-  participatingCohorts: string
+  participatingCohorts: string[]
   sheetSelections?: Array<{
+    fileKey: string
     fileName: string
     rawSheetName?: string
     analysisSheetName?: string
@@ -23,6 +24,7 @@ export interface CompleteDataImportRequestOptions {
 }
 
 export interface CompleteDataImportPreviewFile {
+  fileKey: string
   fileName: string
   sheetNames: string[]
   rawSheetName: string
@@ -86,6 +88,7 @@ export interface CompleteDataImportJob {
   phase: 'queued' | 'importing' | 'completed' | 'failed' | 'canceled'
   files: string[]
   fileProgresses: Array<{
+    fileKey: string
     fileName: string
     totalRows: number
     processedRows: number
@@ -98,6 +101,7 @@ export interface CompleteDataImportJob {
   updatedAt: string
   completedAt?: string
   estimatedSecondsRemaining: number | null
+  currentFileKey?: string
   currentFileName?: string
   currentRow?: number
   message: string
@@ -110,7 +114,7 @@ const buildFormData = (files: File[], options: CompleteDataImportOptions) => {
   files.forEach(file => formData.append('files', file))
   formData.append('formName', options.formName)
   formData.append('academicYear', options.academicYear)
-  formData.append('participatingCohorts', options.participatingCohorts)
+  formData.append('participatingCohorts', options.participatingCohorts.join(','))
   if (options.sheetSelections) {
     formData.append('sheetSelections', JSON.stringify(options.sheetSelections))
   }
@@ -145,9 +149,6 @@ const completeDataImportAPI = {
   ): Promise<CompleteDataImportPreview> {
     return http.post('/complete-data-import/physical-tests/preview', buildFormData(files, options), {
       timeout: 0,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       signal: requestOptions?.signal,
       onUploadProgress: createUploadProgressHandler(requestOptions)
     })
@@ -160,9 +161,6 @@ const completeDataImportAPI = {
   ): Promise<CompleteDataImportResult> {
     return http.post('/complete-data-import/physical-tests/import', buildFormData(files, options), {
       timeout: 0,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       signal: requestOptions?.signal,
       onUploadProgress: createUploadProgressHandler(requestOptions)
     })
@@ -175,9 +173,6 @@ const completeDataImportAPI = {
   ): Promise<CompleteDataImportJob> {
     return http.post('/complete-data-import/physical-tests/import', buildAsyncImportFormData(files, options), {
       timeout: 0,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       signal: requestOptions?.signal,
       onUploadProgress: createUploadProgressHandler(requestOptions)
     })

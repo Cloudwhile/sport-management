@@ -99,7 +99,7 @@ http.interceptors.response.use(
 
     // 根据不同的状态码进行处理
     switch (status) {
-      case 401:
+      case 401: {
         // 判断是否是登录请求
         const isLoginRequest = config.url?.includes('/auth/login')
 
@@ -114,24 +114,28 @@ http.interceptors.response.use(
           window.location.href = '/login'
           break
         }
+      }
 
-      case 403:
+      case 403: {
         // 权限不足
         const forbiddenMsg = getErrorMessage('权限不足，无法访问该资源')
         console.error(forbiddenMsg)
         return Promise.reject(createHttpError(forbiddenMsg))
+      }
 
-      case 500:
+      case 500: {
         // 服务器错误
         const serverErrorMsg = getErrorMessage('服务器错误，请稍后重试')
         console.error(serverErrorMsg)
         return Promise.reject(createHttpError(serverErrorMsg))
+      }
 
-      default:
+      default: {
         // 其他错误，显示后端返回的错误消息
         const errorMessage = getErrorMessage(`请求失败 (${status})`)
         console.error(errorMessage)
         return Promise.reject(createHttpError(errorMessage))
+      }
     }
 
     return Promise.reject(error)

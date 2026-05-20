@@ -66,11 +66,7 @@ const settingsAPI = {
     const formData = new FormData()
     formData.append('file', file)
 
-    return http.post(`/settings/${key}/image`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    })
+    return http.post(`/settings/${key}/image`, formData)
   }
 }
 

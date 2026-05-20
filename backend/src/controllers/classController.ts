@@ -341,9 +341,24 @@ class ClassController {
         const finalCohort = cohort || classData.get('cohort');
         const finalClassName = className ? normalizeClassName(className) : classData.get('className');
 
-        const cohortYear = (finalCohort as string).replace(/级$/, '');
-        const classNumber = extractClassNumberFromClassName(finalClassName as string);
+        const cohortYear = String(finalCohort).replace(/级$/, '');
+        const classNumber = extractClassNumberFromClassName(String(finalClassName));
         updateData.classAccount = `class_${cohortYear}_${String(classNumber).padStart(2, '0')}`;
+
+        const existingAccount = await Class.findOne({
+          where: {
+            id: { [Op.ne]: id },
+            classAccount: updateData.classAccount,
+          },
+        });
+
+        if (existingAccount) {
+          res.status(409).json({
+            success: false,
+            error: '班级账号已存在',
+          });
+          return;
+        }
       }
 
       await classData.update(updateData);

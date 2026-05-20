@@ -486,11 +486,16 @@ const cancelButtonText = computed(() => {
   return '取消'
 })
 
+const getSlotFileKey = (slot: CohortSlot, index: number) => {
+  return slot.file ? `${index}:${slot.file.name}:${slot.file.size}` : slot.id
+}
+
 const importRequestOptions = computed(() => ({
   formName: importOptions.formName,
   academicYear: importOptions.academicYear,
-  participatingCohorts: selectedCohorts.value.join(','),
-  sheetSelections: selectedSlots.value.map(slot => ({
+  participatingCohorts: selectedCohorts.value,
+  sheetSelections: selectedSlots.value.map((slot, index) => ({
+    fileKey: getSlotFileKey(slot, index),
     fileName: slot.file!.name,
     rawSheetName: slot.rawSheetName,
     analysisSheetName: slot.analysisSheetName
@@ -541,11 +546,13 @@ const slotProgress = (slot: CohortSlot): FileProgressItem => {
 
   if (importJob.value) {
     const fileProgresses = importJob.value.fileProgresses
-    const fileProgress = fileProgresses.find(file => file.fileName === slot.file?.name)
+    const slotIndex = selectedSlots.value.findIndex(item => item.id === slot.id)
+    const slotFileKey = getSlotFileKey(slot, slotIndex)
+    const fileProgress = fileProgresses.find(file => file.fileKey === slotFileKey)
     const progress = fileProgress?.progress || 0
-    const fileIndex = fileProgresses.findIndex(file => file.fileName === slot.file?.name)
-    const currentFileIndex = importJob.value.currentFileName
-      ? fileProgresses.findIndex(file => file.fileName === importJob.value?.currentFileName)
+    const fileIndex = fileProgresses.findIndex(file => file.fileKey === slotFileKey)
+    const currentFileIndex = importJob.value.currentFileKey
+      ? fileProgresses.findIndex(file => file.fileKey === importJob.value?.currentFileKey)
       : -1
     let status: FileStatus = progress >= 100 ? '导入成功' : '待导入'
 
@@ -608,7 +615,8 @@ const slotProgress = (slot: CohortSlot): FileProgressItem => {
 
 const slotJobProgress = (slot: CohortSlot) => {
   if (!slot.file || !importJob.value) return null
-  return importJob.value.fileProgresses.find(file => file.fileName === slot.file?.name) || null
+  const slotIndex = selectedSlots.value.findIndex(item => item.id === slot.id)
+  return importJob.value.fileProgresses.find(file => file.fileKey === getSlotFileKey(slot, slotIndex)) || null
 }
 
 const slotProcessedRows = (slot: CohortSlot) => {
@@ -621,7 +629,8 @@ const slotTotalRows = (slot: CohortSlot) => {
 
 const previewFileForSlot = (slot: CohortSlot): CompleteDataImportPreviewFile | null => {
   if (!slot.file || !previewResult.value) return null
-  return previewResult.value.files.find(file => file.fileName === slot.file?.name) || null
+  const slotIndex = selectedSlots.value.findIndex(item => item.id === slot.id)
+  return previewResult.value.files.find(file => file.fileKey === getSlotFileKey(slot, slotIndex)) || null
 }
 
 const applyDetectedSheets = () => {
@@ -715,14 +724,6 @@ const validateImportForm = () => {
   const emptyCohortWithFile = selectedSlots.value.find(slot => !slot.cohort.trim())
   if (emptyCohortWithFile) {
     toast.error('已选择文件的入学年必须填写')
-    return false
-  }
-
-  const duplicateFileNames = selectedFiles.value
-    .map(file => file.name)
-    .filter((name, index, names) => names.indexOf(name) !== index)
-  if (duplicateFileNames.length > 0) {
-    toast.error('存在同名 Excel 文件，请改名后再导入，避免工作表选择冲突')
     return false
   }
 
@@ -984,5 +985,8 @@ const clearImportState = () => {
 
 onUnmounted(() => {
   stopImportJobPolling()
+  activeRequestController.value?.abort()
+  activeRequestController.value = null
+  activeOperation.value = null
 })
 </script>

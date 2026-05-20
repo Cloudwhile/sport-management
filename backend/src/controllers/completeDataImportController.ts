@@ -45,6 +45,7 @@ const scoreToItemCode: Record<string, string> = {
 };
 
 interface ParsedCompleteDataFile {
+  fileKey: string;
   fileName: string;
   sheetNames: string[];
   rawSheetName: string;
@@ -61,9 +62,17 @@ interface ImportOptions {
 }
 
 interface SheetSelection {
+  fileKey: string;
   fileName: string;
   rawSheetName?: string;
   analysisSheetName?: string;
+}
+
+class CompleteDataImportBadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CompleteDataImportBadRequestError";
+  }
 }
 
 class CompleteDataImportValidationError extends Error {
@@ -92,12 +101,14 @@ interface ImportProgressUpdate {
   totalRows: number;
   processedRows: number;
   fileProgresses?: ImportFileProgress[];
+  currentFileKey?: string;
   currentFileName?: string;
   currentRow?: number;
   message?: string;
 }
 
 interface ImportFileProgress {
+  fileKey: string;
   fileName: string;
   totalRows: number;
   processedRows: number;
@@ -125,6 +136,7 @@ interface CompleteDataImportJob {
   updatedAt: string;
   completedAt?: string;
   estimatedSecondsRemaining: number | null;
+  currentFileKey?: string;
   currentFileName?: string;
   currentRow?: number;
   message: string;
@@ -182,6 +194,7 @@ const createCompleteDataImportJob = (files: ParsedCompleteDataFile[]) => {
     phase: "queued",
     files: files.map((file) => file.fileName),
     fileProgresses: files.map((file) => ({
+      fileKey: file.fileKey,
       fileName: file.fileName,
       totalRows: file.rawRows.length,
       processedRows: 0,
@@ -267,13 +280,18 @@ const parseSheetSelections = (req: Request): Map<string, SheetSelection> => {
     const selections = JSON.parse(
       req.body.sheetSelections.toString(),
     ) as SheetSelection[];
+
+    if (!Array.isArray(selections)) {
+      throw new Error("sheetSelections must be an array");
+    }
+
     return new Map(
       selections
-        .filter((selection) => selection.fileName)
-        .map((selection) => [selection.fileName, selection]),
+        .filter((selection) => selection.fileKey)
+        .map((selection) => [selection.fileKey, selection]),
     );
   } catch {
-    return new Map();
+    throw new CompleteDataImportBadRequestError("sheetSelections 格式无效");
   }
 };
 
@@ -330,6 +348,10 @@ const getDisplayFileName = (file: Express.Multer.File): string => {
   } catch {
     return originalName;
   }
+};
+
+const getUploadedFileKey = (file: Express.Multer.File, index: number): string => {
+  return `${index}:${getDisplayFileName(file)}:${file.size}`;
 };
 
 const parseTimeToSeconds = (value: unknown): number | null => {
@@ -461,6 +483,7 @@ const findSheetName = (
 
 const parseCompleteDataFile = (
   file: Express.Multer.File,
+  fileKey: string,
   selection?: SheetSelection,
 ): ParsedCompleteDataFile => {
   const fileName = getDisplayFileName(file);
@@ -508,6 +531,7 @@ const parseCompleteDataFile = (
   }
 
   return {
+    fileKey,
     fileName,
     sheetNames: workbook.SheetNames,
     rawSheetName,
@@ -550,6 +574,7 @@ const summarizeFile = (parsed: ParsedCompleteDataFile) => {
   });
 
   return {
+    fileKey: parsed.fileKey,
     fileName: parsed.fileName,
     sheetNames: parsed.sheetNames,
     rawSheetName: parsed.rawSheetName,
@@ -652,11 +677,12 @@ const importParsedFiles = async (
 ) => {
   const transaction = await sequelize.transaction();
   const totalRows = files.reduce((sum, file) => sum + file.rawRows.length, 0);
-  const fileProcessedRows = new Map(files.map((file) => [file.fileName, 0]));
+  const fileProcessedRows = new Map(files.map((file) => [file.fileKey, 0]));
   const buildFileProgresses = () =>
     files.map((file) => {
-      const processedRows = fileProcessedRows.get(file.fileName) || 0;
+      const processedRows = fileProcessedRows.get(file.fileKey) || 0;
       return {
+        fileKey: file.fileKey,
         fileName: file.fileName,
         totalRows: file.rawRows.length,
         processedRows,
@@ -884,13 +910,14 @@ const importParsedFiles = async (
         }
 
         fileProcessedRows.set(
-          parsed.fileName,
-          (fileProcessedRows.get(parsed.fileName) || 0) + 1,
+          parsed.fileKey,
+          (fileProcessedRows.get(parsed.fileKey) || 0) + 1,
         );
         context?.reportProgress?.({
           totalRows,
           processedRows: results.rows,
           fileProgresses: buildFileProgresses(),
+          currentFileKey: parsed.fileKey,
           currentFileName: parsed.fileName,
           currentRow: rowNumber,
           message: `正在导入 ${parsed.fileName} 第 ${rowNumber} 行`,
@@ -927,9 +954,9 @@ export const previewPhysicalTests = async (
 
     const options = parseOptions(req);
     const sheetSelections = parseSheetSelections(req);
-    const parsedFiles = files.map((file) => {
-      const fileName = getDisplayFileName(file);
-      return parseCompleteDataFile(file, sheetSelections.get(fileName));
+    const parsedFiles = files.map((file, index) => {
+      const fileKey = getUploadedFileKey(file, index);
+      return parseCompleteDataFile(file, fileKey, sheetSelections.get(fileKey));
     });
     const summaries = parsedFiles.map(summarizeFile);
 
@@ -952,7 +979,7 @@ export const previewPhysicalTests = async (
   } catch (error: any) {
     console.error("完整数据预检查失败:", error);
     res
-      .status(500)
+      .status(error instanceof CompleteDataImportBadRequestError ? 400 : 500)
       .json({ error: "完整数据预检查失败", message: error.message });
   }
 };
@@ -979,6 +1006,7 @@ const runCompleteDataImportJob = async (
         totalRows: progress.totalRows,
         processedRows: progress.processedRows,
         fileProgresses: progress.fileProgresses,
+        currentFileKey: progress.currentFileKey,
         currentFileName: progress.currentFileName,
         currentRow: progress.currentRow,
         message: progress.message || "服务端正在写入完整数据",
@@ -1038,9 +1066,9 @@ export const importPhysicalTests = async (
 
     const options = parseOptions(req);
     const sheetSelections = parseSheetSelections(req);
-    const parsedFiles = files.map((file) => {
-      const fileName = getDisplayFileName(file);
-      return parseCompleteDataFile(file, sheetSelections.get(fileName));
+    const parsedFiles = files.map((file, index) => {
+      const fileKey = getUploadedFileKey(file, index);
+      return parseCompleteDataFile(file, fileKey, sheetSelections.get(fileKey));
     });
 
     if (req.body.asyncImport?.toString() === "true") {
@@ -1081,6 +1109,14 @@ export const importPhysicalTests = async (
         error: "完整体测数据导入失败",
         message: error.message,
         data: error.results,
+      });
+      return;
+    }
+
+    if (error instanceof CompleteDataImportBadRequestError) {
+      res.status(400).json({
+        error: "完整体测数据导入失败",
+        message: error.message,
       });
       return;
     }

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { Request, Response } from 'express';
-import { Op } from 'sequelize';
+import { col, fn, Op } from 'sequelize';
 import PhysicalTestRecord from '../models/PhysicalTestRecord.js';
 import PhysicalTestForm from '../models/PhysicalTestForm.js';
 import FormTestItem from '../models/FormTestItem.js';
@@ -240,10 +240,11 @@ const fetchRecords = (where: any) => {
 };
 
 const getClassIdsForGrade = async (gradeLevel: number, academicYear: string) => {
-  const classes = await Class.findAll();
-  return classes
-    .filter(cls => calculateGradeLevel(cls.cohort, academicYear) === gradeLevel)
-    .map(cls => cls.id);
+  const cohort = getCohortFromGradeLevel(gradeLevel, academicYear);
+  if (!cohort) return [];
+
+  const classes = await Class.findAll({ where: { cohort } });
+  return classes.map(cls => cls.id);
 };
 
 const getClassIdsForCohort = async (cohort: string) => {
@@ -269,18 +270,35 @@ const countStudentsForClasses = async (classIds: number[], academicYear: string)
   });
 };
 
+const getStudentCountMapForClasses = async (classIds: number[], academicYear: string) => {
+  if (classIds.length === 0) return new Map<number, number>();
+
+  const rows = await StudentClassRelation.findAll({
+    where: {
+      classId: { [Op.in]: classIds },
+      academicYear,
+      isActive: true,
+    },
+    attributes: ['classId', [fn('COUNT', col('id')), 'studentCount']],
+    group: ['classId'],
+    raw: true,
+  });
+
+  return new Map(
+    rows.map((row: any) => [Number(row.classId), Number(row.studentCount) || 0]),
+  );
+};
+
 const buildClassSummaries = async (classes: any[], records: any[], academicYear: string, items: any[] = []) => {
   const summaries = [];
+  const studentCountMap = await getStudentCountMapForClasses(
+    classes.map(classInfo => Number(classInfo.id)).filter(Boolean),
+    academicYear,
+  );
 
   for (const classInfo of classes) {
     const classRecords = records.filter(record => Number(record.classId) === Number(classInfo.id));
-    const totalStudents = await StudentClassRelation.count({
-      where: {
-        classId: classInfo.id,
-        academicYear,
-        isActive: true,
-      },
-    });
+    const totalStudents = studentCountMap.get(Number(classInfo.id)) || 0;
     const submittedCount = Math.min(getUniqueStudentCount(classRecords), totalStudents);
     const passCount = classRecords.filter(record => toNumber(record.totalScore) >= 60).length;
     const excellentCount = classRecords.filter(record => toNumber(record.totalScore) >= 90).length;
@@ -313,24 +331,48 @@ const buildTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { 
     order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
   });
   const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
+  const formIds = forms.map(form => form.id);
+  const allRecords = formIds.length > 0
+    ? await fetchRecords({ formId: { [Op.in]: formIds } })
+    : [];
+  const recordsByFormId = new Map<number, any[]>();
+  allRecords.forEach(record => {
+    const key = Number(record.formId);
+    if (!recordsByFormId.has(key)) recordsByFormId.set(key, []);
+    recordsByFormId.get(key).push(record);
+  });
+  const gradeClassIdsCache = new Map<string, number[]>();
+
+  const getScopedClassIds = async (form: any) => {
+    const cacheKey = `${options.cohort || options.gradeLevel || ''}:${form.academicYear}`;
+    if (!gradeClassIdsCache.has(cacheKey)) {
+      gradeClassIdsCache.set(
+        cacheKey,
+        await getClassIdsForGradeScope(options, form.academicYear),
+      );
+    }
+    return gradeClassIdsCache.get(cacheKey) || [];
+  };
 
   if (scope === 'class' && options.classId) {
-    const data = [];
-    for (const form of forms) {
-      const records = await PhysicalTestRecord.findAll({ where: { formId: form.id, classId: options.classId } });
-      data.push(getRecordsAverage(records));
-    }
+    const data = forms.map(form => getRecordsAverage(
+      (recordsByFormId.get(Number(form.id)) || []).filter(
+        record => Number(record.classId) === Number(options.classId),
+      ),
+    ));
     return { labels, series: [{ name: '当前班级', data }] };
   }
 
   if (scope === 'grade' && (options.cohort || options.gradeLevel)) {
     const data = [];
     for (const form of forms) {
-      const classIds = await getClassIdsForGradeScope(options, form.academicYear);
-      const records = classIds.length > 0
-        ? await PhysicalTestRecord.findAll({ where: { formId: form.id, classId: { [Op.in]: classIds } } })
-        : [];
-      data.push(getRecordsAverage(records));
+      const classIds = await getScopedClassIds(form);
+      const classIdSet = new Set(classIds.map(Number));
+      data.push(getRecordsAverage(
+        (recordsByFormId.get(Number(form.id)) || []).filter(
+          record => classIdSet.has(Number(record.classId)),
+        ),
+      ));
     }
     const name = options.cohort
       ? formatHighSchoolGradeName(options.cohort)
@@ -344,7 +386,7 @@ const buildTrendSeries = async (scope: 'school' | 'grade' | 'class', options: { 
   forms.forEach(form => (form.participatingCohorts || []).forEach((cohort: string) => allCohorts.add(cohort)));
 
   for (const form of forms) {
-    const records = await fetchRecords({ formId: form.id });
+    const records = recordsByFormId.get(Number(form.id)) || [];
     allData.push(getRecordsAverage(records));
 
     const formCohorts = new Map<string, any[]>();
@@ -479,19 +521,20 @@ const buildItemTrendSeries = async (items: any[], scope: 'school' | 'grade' | 'c
     order: [['academicYear', 'ASC'], ['testDate', 'ASC'], ['id', 'ASC']],
   });
   const labels = forms.map(form => form.testDate ? `${form.academicYear} ${form.testDate}` : form.formName);
+  const scopedByForm = await Promise.all(
+    forms.map(form => getScopedRecordsAndTotal(form, scope, options)),
+  );
   const series = [];
 
   for (const item of items) {
-    const data = [];
-    for (const form of forms) {
-      const scoped = await getScopedRecordsAndTotal(form, scope, options);
+    const data = scopedByForm.map(scoped => {
       const itemScores = scoped.records
         .map(record => getRecordItemScore(record, item.itemCode))
         .filter((score): score is number => score !== null);
-      data.push(itemScores.length > 0
+      return itemScores.length > 0
         ? round(itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length)
-        : 0);
-    }
+        : 0;
+    });
     series.push({ name: item.itemName, itemCode: item.itemCode, data });
   }
 
@@ -521,6 +564,10 @@ const buildClassItemHeatmap = (items: any[], records: any[], classSummaries: any
 
 const buildGradeSummaries = async (classes: any[], records: any[], academicYear: string) => {
   const cohortMap = new Map<string, { classes: any[]; records: any[] }>();
+  const studentCountMap = await getStudentCountMapForClasses(
+    classes.map(classInfo => Number(classInfo.id)).filter(Boolean),
+    academicYear,
+  );
 
   classes.forEach(classInfo => {
     const cohort = String(classInfo.cohort || '');
@@ -539,7 +586,10 @@ const buildGradeSummaries = async (classes: any[], records: any[], academicYear:
   const summaries = [];
   for (const [cohort, group] of cohortMap.entries()) {
     const classIds = group.classes.map(item => item.id);
-    const totalStudents = await countStudentsForClasses(classIds, academicYear);
+    const totalStudents = classIds.reduce(
+      (sum, classId) => sum + (studentCountMap.get(Number(classId)) || 0),
+      0,
+    );
     const metrics = getScoreMetrics(group.records, totalStudents);
     summaries.push({
       cohort,
@@ -800,26 +850,56 @@ export const getStudentHistory = async (req: Request, res: Response) => {
       order: [['created_at', 'ASC']],
     });
 
+    const recordData = (records as any[]).map(record => record.toJSON());
+    const formIds = [...new Set(recordData.map(record => record.formId).filter(Boolean))];
+    const allPeerRecords = formIds.length > 0
+      ? await PhysicalTestRecord.findAll({
+          where: { formId: { [Op.in]: formIds } },
+          attributes: ['formId', 'classId', 'totalScore'],
+          raw: true,
+        })
+      : [];
+    const peerScoresByFormClass = new Map<string, number[]>();
+
+    allPeerRecords.forEach((peer: any) => {
+      const key = `${peer.formId}:${peer.classId}`;
+      if (!peerScoresByFormClass.has(key)) peerScoresByFormClass.set(key, []);
+      peerScoresByFormClass.get(key).push(toNumber(peer.totalScore));
+    });
+
+    const gradeClassIdsByRecord = new Map<string, number[]>();
+    const uniqueGradeScopes = new Map<string, { gradeLevel: number; academicYear: string }>();
+
+    recordData.forEach(data => {
+      const gradeLevel = data.class?.cohort && data.form?.academicYear
+        ? calculateGradeLevel(data.class.cohort, data.form.academicYear)
+        : null;
+      if (!gradeLevel) return;
+
+      const key = `${gradeLevel}:${data.form.academicYear}`;
+      uniqueGradeScopes.set(key, { gradeLevel, academicYear: data.form.academicYear });
+    });
+
+    for (const [key, scope] of uniqueGradeScopes.entries()) {
+      gradeClassIdsByRecord.set(
+        key,
+        await getClassIdsForGrade(scope.gradeLevel, scope.academicYear),
+      );
+    }
+
     const history = [];
-    for (const record of records as any[]) {
-      const data = record.toJSON();
+    for (const data of recordData) {
       const totalScore = toNumber(data.totalScore);
-      const classPeerRecords = await PhysicalTestRecord.findAll({
-        where: { formId: data.formId, classId: data.classId },
-        attributes: ['totalScore'],
-      });
       const gradeLevel = data.class?.cohort && data.form?.academicYear
         ? calculateGradeLevel(data.class.cohort, data.form.academicYear)
         : null;
       const gradeClassIds = gradeLevel
-        ? await getClassIdsForGrade(gradeLevel, data.form.academicYear)
+        ? gradeClassIdsByRecord.get(`${gradeLevel}:${data.form.academicYear}`) || []
         : [];
-      const gradePeerRecords = gradeClassIds.length > 0
-        ? await PhysicalTestRecord.findAll({
-            where: { formId: data.formId, classId: { [Op.in]: gradeClassIds } },
-            attributes: ['totalScore'],
-          })
-        : [];
+      const classPeerScores = peerScoresByFormClass.get(`${data.formId}:${data.classId}`) || [];
+      const gradePeerScores = gradeClassIds.flatMap(
+        classId => peerScoresByFormClass.get(`${data.formId}:${classId}`) || [],
+      );
 
       history.push({
         id: data.id,
@@ -835,8 +915,8 @@ export const getStudentHistory = async (req: Request, res: Response) => {
         totalScore: data.totalScore,
         gradeLevel: data.gradeLevel,
         percentile: {
-          class: calculatePercentile(totalScore, classPeerRecords.map(peer => toNumber(peer.get('totalScore')))),
-          grade: calculatePercentile(totalScore, gradePeerRecords.map(peer => toNumber(peer.get('totalScore')))),
+          class: calculatePercentile(totalScore, classPeerScores),
+          grade: calculatePercentile(totalScore, gradePeerScores),
         },
         submittedAt: data.submittedAt,
       });

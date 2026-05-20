@@ -53,22 +53,6 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       defaultValue: DataTypes.NOW,
     },
   });
-
-  // 创建索引
-  await queryInterface.addIndex("classes", ["cohort"], {
-    name: "classes_cohort_idx",
-  });
-
-  await queryInterface.addIndex("classes", ["graduated"], {
-    name: "classes_graduated_idx",
-  });
-
-  // 创建唯一约束：同一届同一个班级只能有一个
-  await queryInterface.addConstraint("classes", {
-    fields: ["cohort", "class_name"],
-    type: "unique",
-    name: "classes_cohort_class_name_unique",
-  });
 };
 
 export const down: MigrationFn<MigrationContext> = async (params) => {

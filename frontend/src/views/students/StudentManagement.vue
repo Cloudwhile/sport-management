@@ -73,6 +73,7 @@ const batchElapsedTimer = ref<number | null>(null)
 const batchImportController = ref<AbortController | null>(null)
 const batchImportJob = ref<StudentBatchImportJob | null>(null)
 const batchImportJobPoller = ref<number | null>(null)
+const isBatchJobPollingInFlight = ref(false)
 const batchCancelRequested = ref(false)
 
 // 表单数据
@@ -507,6 +508,7 @@ const stopBatchImportJobPolling = () => {
     window.clearInterval(batchImportJobPoller.value)
     batchImportJobPoller.value = null
   }
+  isBatchJobPollingInFlight.value = false
 }
 
 const applyBatchImportJob = (job: StudentBatchImportJob) => {
@@ -562,7 +564,11 @@ const pollBatchImportJob = async (jobId: string) => {
 const startBatchImportJobPolling = (jobId: string) => {
   stopBatchImportJobPolling()
   batchImportJobPoller.value = window.setInterval(() => {
-    void pollBatchImportJob(jobId)
+    if (isBatchJobPollingInFlight.value) return
+    isBatchJobPollingInFlight.value = true
+    void pollBatchImportJob(jobId).finally(() => {
+      isBatchJobPollingInFlight.value = false
+    })
   }, 1000)
 }
 
@@ -574,6 +580,7 @@ const cancelBatchImport = async () => {
       const job = await studentsAPI.cancelBatchImportJob(batchImportJob.value.id)
       applyBatchImportJob(job)
     } catch (error: any) {
+      batchCancelRequested.value = false
       toast.error(error.message || '取消批量导入失败')
     }
     return

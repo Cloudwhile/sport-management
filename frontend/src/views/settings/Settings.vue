@@ -164,7 +164,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '@/stores'
 import { useToast } from '@/composables/useToast'
 import Card from '@/components/common/Card.vue'
@@ -211,6 +211,15 @@ const previewUrls = reactive<Record<ImageSettingKey, string>>({
   site_logo_url: '',
   home_image_url: ''
 })
+
+const allowedImageMimeTypes = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/x-icon',
+  'image/vnd.microsoft.icon'
+])
 
 const imageSettingItems: Array<{
   key: ImageSettingKey
@@ -285,7 +294,7 @@ const handleImageSelect = (key: ImageSettingKey, event: Event) => {
   const file = input.files?.[0]
   if (!file) return
 
-  if (!file.type.startsWith('image/') && file.type !== 'image/x-icon') {
+  if (!allowedImageMimeTypes.has(file.type)) {
     toast.error('请选择图片文件')
     input.value = ''
     return
@@ -354,5 +363,10 @@ const handleReset = () => {
 
 onMounted(() => {
   loadSettings()
+})
+
+onUnmounted(() => {
+  revokePreviewUrl('site_logo_url')
+  revokePreviewUrl('home_image_url')
 })
 </script>

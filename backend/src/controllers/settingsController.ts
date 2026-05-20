@@ -47,7 +47,9 @@ const getKnownSettingDefaults = (key: string) => {
 export const uploadSettingImage = async (req: Request, res: Response) => {
   try {
     const { key } = req.params;
-    const defaults = getKnownSettingDefaults(key);
+    const defaults = APPEARANCE_SETTINGS[key]
+      ? { key, value: '', ...APPEARANCE_SETTINGS[key] }
+      : null;
 
     if (!defaults) {
       return res.status(400).json({
@@ -87,7 +89,13 @@ export const uploadSettingImage = async (req: Request, res: Response) => {
       },
     });
 
+    const previousUrl = String(setting.get('value') || '');
     await setting.update({ value: publicUrl });
+
+    if (previousUrl.startsWith('/uploads/settings/') && previousUrl !== publicUrl) {
+      const oldFilePath = path.join(uploadDir, path.basename(previousUrl));
+      void fs.unlink(oldFilePath).catch(() => undefined);
+    }
 
     res.json({
       success: true,

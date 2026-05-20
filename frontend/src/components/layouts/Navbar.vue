@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore, useSettingsStore } from '@/stores'
 import { useUIStore } from '@/stores/ui'
@@ -14,6 +14,12 @@ const settingsStore = useSettingsStore()
 // 获取应用标题
 const appTitle = computed(() => settingsStore.appTitle)
 const siteLogoUrl = computed(() => settingsStore.siteLogoUrl)
+const siteLogoLoadFailed = ref(false)
+const showSiteLogo = computed(() => Boolean(siteLogoUrl.value) && !siteLogoLoadFailed.value)
+
+watch(siteLogoUrl, () => {
+  siteLogoLoadFailed.value = false
+})
 
 // 计算角色显示名称
 const roleLabel = computed(() => {
@@ -72,10 +78,11 @@ const handleLogout = async () => {
 
         <div class="flex h-10 min-w-10 items-center justify-center">
           <img
-            v-if="siteLogoUrl"
+            v-if="showSiteLogo"
             :src="siteLogoUrl"
             :alt="appTitle"
             class="h-10 max-w-32 object-contain"
+            @error="siteLogoLoadFailed = true"
           />
           <div v-else class="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600">
             <span class="text-white font-bold text-lg">体测</span>
