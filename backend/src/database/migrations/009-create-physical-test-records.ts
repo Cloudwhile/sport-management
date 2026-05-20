@@ -1,10 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createIndexIfColumnsExist,
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('physical_test_records', {
+  await createTableIfMissing(queryInterface, 'physical_test_records', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -81,20 +86,29 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建唯一索引：同一表单，一个学生只能有一条记录
-  await queryInterface.addIndex('physical_test_records', ['form_id', 'student_id'], {
-    name: 'physical_test_records_form_student_unique',
-    unique: true,
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'physical_test_records',
+    'physical_test_records_form_student_unique',
+    ['form_id', 'student_id'],
+    true,
+  );
 
-  await queryInterface.addIndex('physical_test_records', ['student_id'], {
-    name: 'physical_test_records_student_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'physical_test_records',
+    'physical_test_records_student_id_idx',
+    ['student_id'],
+  );
 
-  await queryInterface.addIndex('physical_test_records', ['class_id'], {
-    name: 'physical_test_records_class_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'physical_test_records',
+    'physical_test_records_class_id_idx',
+    ['class_id'],
+  );
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable('physical_test_records');
+  await dropTableIfExists(params.context.queryInterface, 'physical_test_records');
 };

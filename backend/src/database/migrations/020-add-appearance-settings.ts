@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import type { MigrationFn } from 'umzug';
 import type { MigrationContext } from '../umzug.js';
+import { describeTableIfExists } from '../migration-helpers.js';
 
 const settings = [
   {
@@ -26,6 +27,19 @@ const settings = [
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface } = context;
+  const settingsTable = await describeTableIfExists(queryInterface, 'settings');
+
+  if (
+    !settingsTable?.key ||
+    !settingsTable.value ||
+    !settingsTable.description ||
+    !settingsTable.category ||
+    !settingsTable.is_public ||
+    !settingsTable.created_at ||
+    !settingsTable.updated_at
+  ) {
+    return;
+  }
 
   for (const setting of settings) {
     await queryInterface.sequelize.query(
@@ -46,6 +60,11 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 export const down: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface } = context;
+  const settingsTable = await describeTableIfExists(queryInterface, 'settings');
+
+  if (!settingsTable?.key || !settingsTable.value || !settingsTable.category) {
+    return;
+  }
 
   await queryInterface.bulkDelete('settings', {
     [Op.and]: [

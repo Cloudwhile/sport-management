@@ -1,11 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  addColumnIfMissing,
+  removeColumnIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
 
-  await queryInterface.addColumn('physical_test_forms', 'participating_cohorts', {
+  await addColumnIfMissing(queryInterface, 'physical_test_forms', 'participating_cohorts', {
     type: DataTypes.JSONB,
     allowNull: false,
     defaultValue: [],
@@ -14,5 +18,9 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.removeColumn('physical_test_forms', 'participating_cohorts');
+  await removeColumnIfExists(
+    params.context.queryInterface,
+    'physical_test_forms',
+    'participating_cohorts',
+  );
 };

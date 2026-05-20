@@ -1,10 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createIndexIfColumnsExist,
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('form_test_items', {
+  await createTableIfMissing(queryInterface, 'form_test_items', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -66,15 +71,21 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建索引
-  await queryInterface.addIndex('form_test_items', ['form_id'], {
-    name: 'form_test_items_form_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'form_test_items',
+    'form_test_items_form_id_idx',
+    ['form_id'],
+  );
 
-  await queryInterface.addIndex('form_test_items', ['item_code'], {
-    name: 'form_test_items_item_code_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'form_test_items',
+    'form_test_items_item_code_idx',
+    ['item_code'],
+  );
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable('form_test_items');
+  await dropTableIfExists(params.context.queryInterface, 'form_test_items');
 };

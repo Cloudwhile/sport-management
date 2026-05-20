@@ -1,10 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createIndexIfColumnsExist,
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('teacher_class_relations', {
+  await createTableIfMissing(queryInterface, 'teacher_class_relations', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -40,15 +45,21 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建索引
-  await queryInterface.addIndex('teacher_class_relations', ['user_id'], {
-    name: 'teacher_class_relations_user_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'teacher_class_relations',
+    'teacher_class_relations_user_id_idx',
+    ['user_id'],
+  );
 
-  await queryInterface.addIndex('teacher_class_relations', ['class_id'], {
-    name: 'teacher_class_relations_class_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'teacher_class_relations',
+    'teacher_class_relations_class_id_idx',
+    ['class_id'],
+  );
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable('teacher_class_relations');
+  await dropTableIfExists(params.context.queryInterface, 'teacher_class_relations');
 };

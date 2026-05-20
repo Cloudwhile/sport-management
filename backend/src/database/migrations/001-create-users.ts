@@ -1,10 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createIndexIfColumnsExist,
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('users', {
+  await createTableIfMissing(queryInterface, 'users', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -44,16 +49,22 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建索引
-  await queryInterface.addIndex('users', ['username'], {
-    name: 'users_username_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'users',
+    'users_username_idx',
+    ['username'],
+  );
 
-  await queryInterface.addIndex('users', ['role'], {
-    name: 'users_role_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'users',
+    'users_role_idx',
+    ['role'],
+  );
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
-  await context.queryInterface.dropTable('users');
+  await dropTableIfExists(context.queryInterface, 'users');
 };

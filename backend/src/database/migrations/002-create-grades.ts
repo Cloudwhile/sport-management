@@ -1,10 +1,14 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('grades', {
+  await createTableIfMissing(queryInterface, 'grades', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -29,5 +33,5 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable('grades');
+  await dropTableIfExists(params.context.queryInterface, 'grades');
 };

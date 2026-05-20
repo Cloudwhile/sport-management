@@ -1,10 +1,15 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  createIndexIfColumnsExist,
+  createTableIfMissing,
+  dropTableIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable('student_class_relations', {
+  await createTableIfMissing(queryInterface, 'student_class_relations', {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -51,16 +56,22 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   });
 
   // 创建唯一索引：同一学年，一个学生只能在一个班级
-  await queryInterface.addIndex('student_class_relations', ['student_id', 'academic_year'], {
-    name: 'student_class_relations_student_year_unique',
-    unique: true,
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'student_class_relations',
+    'student_class_relations_student_year_unique',
+    ['student_id', 'academic_year'],
+    true,
+  );
 
-  await queryInterface.addIndex('student_class_relations', ['class_id'], {
-    name: 'student_class_relations_class_id_idx',
-  });
+  await createIndexIfColumnsExist(
+    context,
+    'student_class_relations',
+    'student_class_relations_class_id_idx',
+    ['class_id'],
+  );
 }
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable('student_class_relations');
+  await dropTableIfExists(params.context.queryInterface, 'student_class_relations');
 };

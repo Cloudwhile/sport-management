@@ -1,5 +1,6 @@
 import type { MigrationFn } from 'umzug';
 import type { MigrationContext } from '../umzug.js';
+import { describeTableIfExists } from '../migration-helpers.js';
 
 const setting = {
   key: 'school_level',
@@ -14,6 +15,19 @@ const setting = {
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface } = context;
+  const settingsTable = await describeTableIfExists(queryInterface, 'settings');
+
+  if (
+    !settingsTable?.key ||
+    !settingsTable.value ||
+    !settingsTable.description ||
+    !settingsTable.category ||
+    !settingsTable.is_public ||
+    !settingsTable.created_at ||
+    !settingsTable.updated_at
+  ) {
+    return;
+  }
 
   await queryInterface.sequelize.query(
     `

@@ -1,10 +1,15 @@
 import { MigrationContext } from "../umzug.js";
 import { MigrationFn } from "umzug";
+import {
+  createTableIfMissing,
+  dropTableIfExists,
+} from "../migration-helpers.js";
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface, DataTypes } = context;
-  await queryInterface.createTable("classes", {
+
+  await createTableIfMissing(queryInterface, "classes", {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true,
@@ -31,17 +36,6 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
       allowNull: true,
       comment: "班级密码哈希",
     },
-    graduated: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-      comment: "是否已毕业",
-    },
-    graduation_year: {
-      type: DataTypes.STRING(10),
-      allowNull: true,
-      comment: "毕业年份",
-    },
     created_at: {
       type: DataTypes.DATE,
       allowNull: false,
@@ -56,5 +50,5 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 };
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
-  await params.context.queryInterface.dropTable("classes");
+  await dropTableIfExists(params.context.queryInterface, "classes");
 };

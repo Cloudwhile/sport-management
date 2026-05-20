@@ -1,6 +1,11 @@
 import { QueryTypes } from "sequelize";
 import type { MigrationFn } from "umzug";
 import type { MigrationContext } from "../umzug.js";
+import {
+  createIndexIfColumnsExist,
+  createUniqueConstraintIfColumnsExist,
+  describeTableIfExists,
+} from "../migration-helpers.js";
 
 const INDEXES = {
   cohort: "classes_cohort_idx",
@@ -9,6 +14,11 @@ const INDEXES = {
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { queryInterface } = params.context;
+  const tableDescription = await describeTableIfExists(queryInterface, "classes");
+
+  if (!tableDescription?.cohort || !tableDescription.class_name) {
+    return;
+  }
 
   const duplicates = await queryInterface.sequelize.query(
     `
@@ -24,25 +34,19 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
     throw new Error("classes 表存在重复的 cohort/class_name，无法添加唯一约束");
   }
 
-  await queryInterface.sequelize.query(`
-    CREATE INDEX IF NOT EXISTS ${INDEXES.cohort} ON classes (cohort)
-  `);
+  await createIndexIfColumnsExist(
+    params.context,
+    "classes",
+    INDEXES.cohort,
+    ["cohort"],
+  );
 
-  await queryInterface.sequelize.query(`
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = '${INDEXES.uniqueClassName}'
-          AND conrelid = 'classes'::regclass
-      ) THEN
-        ALTER TABLE classes
-          ADD CONSTRAINT ${INDEXES.uniqueClassName}
-          UNIQUE (cohort, class_name);
-      END IF;
-    END $$;
-  `);
+  await createUniqueConstraintIfColumnsExist(
+    params.context,
+    "classes",
+    INDEXES.uniqueClassName,
+    ["cohort", "class_name"],
+  );
 };
 
 export const down: MigrationFn<MigrationContext> = async (_params) => {

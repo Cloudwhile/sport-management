@@ -1,9 +1,14 @@
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import { columnExists } from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface } = context;
+
+  if (!(await columnExists(queryInterface, 'classes', 'cohort'))) {
+    return;
+  }
 
   // 更新 classes 表中所有带"级"的 cohort 数据，去掉"级"字
   // 例如：2024级 -> 2024
@@ -17,6 +22,10 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 export const down: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
   const { queryInterface } = context;
+
+  if (!(await columnExists(queryInterface, 'classes', 'cohort'))) {
+    return;
+  }
 
   // 回滚时重新加上"级"字
   await queryInterface.sequelize.query(`

@@ -1,57 +1,69 @@
 import { DataTypes } from 'sequelize';
 import { MigrationContext } from '../umzug.js';
 import { MigrationFn } from 'umzug';
+import {
+  addColumnIfMissing,
+  createIndexIfColumnsExist,
+  describeTableIfExists,
+  removeColumnIfExists,
+} from '../migration-helpers.js';
 
 export const up: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
-  const queryInterface = context.sequelize.getQueryInterface();
+  const { queryInterface } = context;
+  const tableDescription = await describeTableIfExists(queryInterface, 'classes');
 
-  console.log('开始删除班级表的毕业状态相关字段...');
-
-  // 删除 graduated 字段的索引
-  try {
-    await queryInterface.removeIndex('classes', ['graduated']);
-    console.log('✓ 删除 graduated 字段索引');
-  } catch (error) {
-    console.log('- graduated 字段索引不存在或已删除');
+  if (!tableDescription) {
+    console.log('- classes table does not exist, skipping graduation fields removal');
+    return;
   }
 
-  // 删除 graduated 字段
-  await queryInterface.removeColumn('classes', 'graduated');
-  console.log('✓ 删除 graduated 字段');
+  try {
+    await queryInterface.removeIndex('classes', ['graduated']);
+  } catch {
+    // Index may not exist in older or partially migrated databases.
+  }
 
-  // 删除 graduation_year 字段
-  await queryInterface.removeColumn('classes', 'graduation_year');
-  console.log('✓ 删除 graduation_year 字段');
+  if (tableDescription.graduated) {
+    await removeColumnIfExists(queryInterface, 'classes', 'graduated');
+  }
 
-  console.log('毕业状态字段已改为虚拟计算字段');
-  console.log('   现在班级的毕业状态将根据 cohort 字段自动计算');
-  console.log('   配置文件: backend/src/config/school.ts');
+  if (tableDescription.graduation_year) {
+    await removeColumnIfExists(queryInterface, 'classes', 'graduation_year');
+  }
 };
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
   const { context } = params;
-  const queryInterface = context.sequelize.getQueryInterface();
+  const { queryInterface } = context;
+  const tableDescription = await describeTableIfExists(queryInterface, 'classes');
 
-  console.log('恢复班级表的毕业状态字段...');
+  if (!tableDescription) {
+    console.log('- classes table does not exist, skipping graduation fields restore');
+    return;
+  }
 
-  // 恢复 graduated 字段
-  await queryInterface.addColumn('classes', 'graduated', {
-    type: DataTypes.BOOLEAN,
-    allowNull: false,
-    defaultValue: false,
-    comment: '是否已毕业',
-  });
+  if (!tableDescription.graduated) {
+    await addColumnIfMissing(queryInterface, 'classes', 'graduated', {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      comment: 'Whether the class has graduated',
+    });
+  }
 
-  // 恢复 graduation_year 字段
-  await queryInterface.addColumn('classes', 'graduation_year', {
-    type: DataTypes.STRING(10),
-    allowNull: true,
-    comment: '毕业年份',
-  });
+  if (!tableDescription.graduation_year) {
+    await addColumnIfMissing(queryInterface, 'classes', 'graduation_year', {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+      comment: 'Graduation year',
+    });
+  }
 
-  // 恢复 graduated 索引
-  await queryInterface.addIndex('classes', ['graduated']);
-
-  console.log('✓ 毕业状态字段已恢复');
+  await createIndexIfColumnsExist(
+    context,
+    'classes',
+    'classes_graduated_idx',
+    ['graduated'],
+  );
 };
