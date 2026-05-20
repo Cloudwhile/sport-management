@@ -404,7 +404,7 @@ const parseClassInfo = (
 
   return {
     cohort: match[1],
-    className: normalizeClassName(`${match[2]}\u73ed`),
+    className: normalizeClassName(`${match[2]}班`),
     classNumber: match[2],
   };
 };

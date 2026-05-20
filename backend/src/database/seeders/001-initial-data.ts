@@ -16,7 +16,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
 
   if (existingUsers.length > 0) {
     const existingUsernames = (existingUsers as any[]).map(u => u.username);
-    console.log(`⚠ 以下用户已存在，跳过创建: ${existingUsernames.join(', ')}`);
+    console.log(`以下用户已存在，跳过创建: ${existingUsernames.join(', ')}`);
 
     // 只创建不存在的用户
     const usersToCreate = [];

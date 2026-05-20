@@ -3,9 +3,12 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 // import rateLimit from 'express-rate-limit';
+import { installConsoleLogger, logger } from "./utils/logger.js";
 import config from "./config/index.js";
 import { testConnection } from "./database/connection.js";
-import { migrator } from "./database/umzug.js";
+import { migrator, seeder } from "./database/umzug.js";
+
+installConsoleLogger();
 
 const app: Application = express();
 
@@ -18,7 +21,7 @@ app.use(
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "https:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
         connectSrc: ["'self'"],
         fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
@@ -30,7 +33,11 @@ app.use(
   }),
 );
 app.use(cors(config.cors));
-app.use(morgan(config.app.env === "development" ? "dev" : "combined"));
+app.use(
+  morgan(config.app.env === "development" ? "dev" : "combined", {
+    stream: logger.httpStream,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -72,17 +79,31 @@ import completeDataImportRoutes from "./routes/completeDataImport.js";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const getRuntimeDirname = () => {
+  if (typeof __dirname === "string") return __dirname;
+  return dirname(fileURLToPath(import.meta.url));
+};
+const __runtimeDirname = getRuntimeDirname();
 
-let swaggerDocument: any = null;
-if (config.app.env !== "production") {
+const setupSwagger = async () => {
+  if (config.app.env === "production") return;
+
   const swaggerUi = await import("swagger-ui-express");
   const YAML = await import("yamljs");
-  swaggerDocument = YAML.default.load(
-    join(__dirname, "swagger", "openapi.yaml"),
+  const swaggerDocument = YAML.default.load(
+    join(__runtimeDirname, "swagger", "openapi.yaml"),
   );
-}
+
+  app.use(
+    "/api-docs",
+    swaggerUi.default.serve,
+    swaggerUi.default.setup(swaggerDocument, {
+      customCss: ".swagger-ui .topbar { display: none }",
+      customSiteTitle: "学校体测系统 API 文档",
+    }),
+  );
+  console.log("Swagger API 文档已启用: /api-docs");
+};
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -95,112 +116,111 @@ app.use("/api/statistics", statisticsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/complete-data-import", completeDataImportRoutes);
 
-// Swagger UI（仅在非生产环境启用）
-if (config.app.env !== "production" && swaggerDocument) {
-  const swaggerUi = await import("swagger-ui-express");
-  app.use(
-    "/api-docs",
-    swaggerUi.default.serve,
-    swaggerUi.default.setup(swaggerDocument, {
-      customCss: ".swagger-ui .topbar { display: none }",
-      customSiteTitle: "学校体测系统 API 文档",
-    }),
-  );
-  console.log("📚 Swagger API 文档已启用: /api-docs");
-}
-
 // 静态文件服务（前端构建文件）
 import path from "path";
 
-const uploadsPath = path.resolve(process.cwd(), "uploads");
-app.use("/uploads", express.static(uploadsPath));
-// 生产环境：从 dist/frontend 读取
-// 开发环境：从 ../../frontend/dist 读取
-const frontendPath =
-  config.app.env === "production"
-    ? path.join(__dirname, "frontend")
-    : path.join(__dirname, "../../frontend/dist");
+const setupFrontendRoutes = () => {
+  const uploadsPath = path.resolve(process.cwd(), "uploads");
+  app.use("/uploads", express.static(uploadsPath));
+  // 生产环境：从 dist/frontend 读取
+  // 开发环境：从 ../../frontend/dist 读取
+  const frontendPath =
+    config.app.env === "production"
+      ? path.join(__runtimeDirname, "frontend")
+      : path.join(__runtimeDirname, "../../frontend/dist");
 
-app.use(express.static(frontendPath));
+  app.use(express.static(frontendPath));
 
-// SPA 路由处理：所有非 API 请求都返回 index.html
-// 这样前端的 Vue Router 就可以处理路由了
-app.get("*", (req: Request, res: Response): void => {
-  // 如果是 API 请求但没有匹配到路由，返回 404
-  if (req.path.startsWith("/api")) {
-    res.status(404).json({ error: "接口不存在" });
-    return;
-  }
-  // 其他所有请求返回前端 index.html
-  res.sendFile(path.join(frontendPath, "index.html"));
-});
+  // SPA 路由处理：所有非 API 请求都返回 index.html
+  // 这样前端的 Vue Router 就可以处理路由了
+  app.get("*", (req: Request, res: Response): void => {
+    // 如果是 API 请求但没有匹配到路由，返回 404
+    if (req.path.startsWith("/api")) {
+      res.status(404).json({ error: "接口不存在" });
+      return;
+    }
+    // 其他所有请求返回前端 index.html
+    res.sendFile(path.join(frontendPath, "index.html"));
+  });
+};
 
-// 错误处理
-app.use(
-  (
-    err: Error & { status?: number },
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    console.error("服务器错误:", err);
-    res.status(err.status || 500).json({
-      error: err.message || "服务器内部错误",
-      ...(config.app.env === "development" && { stack: err.stack }),
-    });
-  },
-);
+const setupErrorHandler = () => {
+  app.use(
+    (
+      err: Error & { status?: number },
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
+      console.error("服务器错误:", err);
+      res.status(err.status || 500).json({
+        error: err.message || "服务器内部错误",
+        ...(config.app.env === "development" && { stack: err.stack }),
+      });
+    },
+  );
+};
 
 // 启动服务器
 const startServer = async (): Promise<void> => {
   try {
+    await setupSwagger();
+    setupFrontendRoutes();
+    setupErrorHandler();
+
     // 测试数据库连接
     await testConnection();
 
     // 检查迁移状态
     const pending = await migrator.pending();
+    const autoMigrate = process.env.AUTO_MIGRATE === "true";
+    const autoSeed = process.env.AUTO_SEED === "true";
+    const shouldAutoMigrate = config.app.env === "development" || autoMigrate;
+    const shouldAutoSeed = config.app.env === "development" || autoSeed;
+
     if (pending.length > 0) {
-      console.warn(`⚠️  数据库有 ${pending.length} 个待执行的迁移`);
+      console.warn(`数据库有 ${pending.length} 个待执行的迁移`);
       console.warn("   请先执行: npm run db:migrate");
 
-      // 检查是否启用自动迁移（通过环境变量 AUTO_MIGRATE）
-      const autoMigrate = process.env.AUTO_MIGRATE === "true";
-
-      if (config.app.env === "development" || autoMigrate) {
+      if (shouldAutoMigrate) {
         console.log("   自动执行迁移中...");
         await migrator.up();
-        console.log("✅ 数据库迁移已完成");
-
-        // 如果启用了自动种子数据（通过环境变量 AUTO_SEED）
-        if (process.env.AUTO_SEED === "true") {
-          console.log("   执行种子数据...");
-          try {
-            // 动态导入种子执行器
-            const { seeder } = await import("./database/umzug.js");
-            await seeder.up();
-            console.log("✅ 种子数据已完成");
-          } catch (error: any) {
-            console.warn("⚠️  种子数据执行失败（可能已存在）:", error.message);
-          }
-        }
+        console.log("数据库迁移已完成");
       } else {
-        console.error("❌ 生产环境不允许自动迁移，请手动执行迁移后再启动");
+        console.error("生产环境不允许自动迁移，请手动执行迁移后再启动");
         console.error("   或者设置环境变量 AUTO_MIGRATE=true 启用自动迁移");
         process.exit(1);
       }
     } else {
-      console.log("✅ 数据库迁移状态正常");
+      console.log("数据库迁移状态正常");
+    }
+
+    const pendingSeeds = await seeder.pending();
+    if (pendingSeeds.length > 0 && shouldAutoSeed) {
+      console.log("   执行种子数据...");
+      try {
+        await seeder.up();
+        console.log("种子数据已完成");
+      } catch (error: any) {
+        console.error("种子数据执行失败:", error);
+        throw error;
+      }
+    } else if (pendingSeeds.length > 0) {
+      console.warn(`数据库有 ${pendingSeeds.length} 个待执行的种子数据`);
+      console.warn("   设置 AUTO_SEED=true 可在生产环境启动时自动执行");
+    } else {
+      console.log("种子数据状态正常");
     }
 
     // 启动服务器
     app.listen(config.app.port, config.app.host, () => {
       console.log(
-        `🚀 服务器启动成功: http://${config.app.host}:${config.app.port}`,
+        `服务器启动成功: http://${config.app.host}:${config.app.port}`,
       );
-      console.log(`📝 环境: ${config.app.env}`);
+      console.log(`环境: ${config.app.env}`);
     });
   } catch (error) {
-    console.error("❌ 服务器启动失败:", error);
+    console.error("服务器启动失败:", error);
     process.exit(1);
   }
 };

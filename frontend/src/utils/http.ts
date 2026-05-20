@@ -4,10 +4,7 @@ import type { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'a
 // 创建 Axios 实例
 const http: AxiosInstance = axios.create({
   baseURL: '/api',
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  timeout: 10000
 })
 
 // 请求拦截器
@@ -19,6 +16,13 @@ http.interceptors.request.use(
     // 如果 token 存在，添加到请求头
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+
+    if (config.data instanceof FormData) {
+      config.headers.delete?.('Content-Type')
+      delete config.headers['Content-Type']
+    } else if (config.data && config.headers && !config.headers['Content-Type']) {
+      config.headers['Content-Type'] = 'application/json'
     }
 
     // 开发环境打印请求日志

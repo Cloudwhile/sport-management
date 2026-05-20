@@ -1,7 +1,18 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { Dialect } from 'sequelize';
 
-dotenv.config();
+const isPackagedExecutable = Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg);
+const envPaths = isPackagedExecutable
+  ? [path.join(path.dirname(process.execPath), '.env'), path.resolve(process.cwd(), '.env')]
+  : [path.resolve(process.cwd(), '.env')];
+
+for (const envPath of envPaths) {
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+  }
+}
 
 interface AppConfig {
   env: string;

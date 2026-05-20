@@ -8,6 +8,8 @@ yarn-error.log*
 .vscode/
 .idea/
 dist/
+dist-pkg/
+dist-exe/
 build/
 coverage/
 

@@ -1,4 +1,4 @@
-# 学校体测数据管理系统 - Docker 部署指南
+# 学校体测数据管理系统 - 部署指南
 
 ## 快速开始
 
@@ -46,7 +46,88 @@ docker-compose ps
 - 用户名: `admin`
 - 密码: `admin123`
 
-### 5. 数据库初始化
+## Windows 单文件 EXE 部署
+
+本项目也支持将前端静态资源和后端 Express 服务打包为一个 Windows exe。exe 只包含应用本体，PostgreSQL 数据库、`.env` 配置和 `uploads/` 运行时上传目录仍建议放在 exe 外部。
+
+### 1. 构建 exe
+
+```powershell
+cd backend
+npm.cmd run build:exe
+```
+
+构建产物：
+
+```text
+backend/dist-exe/sport-management.exe
+backend/dist-exe/.env
+backend/dist-exe/.env.example
+```
+
+该命令会先执行完整生产构建：
+
+- 编译后端到 `backend/dist`
+- 构建前端并复制到 `backend/dist/frontend`
+- 使用 `pkg` 输出 `sport-management.exe`
+- 从 `backend/.env.exe.example` 生成 exe 运行用 `.env.example`，并在 `.env` 不存在时生成 `.env`
+
+### 2. 准备运行目录
+
+建议部署目录保持如下结构：
+
+```text
+sport-management/
+  sport-management.exe
+  .env
+  .env.example
+  uploads/
+```
+
+示例 `.env`：
+
+```env
+NODE_ENV=production
+HOST=0.0.0.0
+PORT=3000
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_NAME=sport_management
+DB_USER=postgres
+DB_PASSWORD=your-secure-password
+JWT_SECRET=your-jwt-secret-key
+AUTO_MIGRATE=true
+```
+
+### 3. 启动
+
+```powershell
+.\sport-management.exe
+```
+
+启动后访问：
+
+```text
+http://127.0.0.1:3000
+```
+
+### 4. 日志格式
+
+exe 运行时会将应用日志、错误日志和 HTTP 访问日志写到标准输出，格式统一为：
+
+```text
+DATETIME [LEVEL]: DETAILS
+```
+
+示例：
+
+```text
+2026-05-20T08:00:00.000Z [INFO]: 服务器启动成功: http://0.0.0.0:3000
+2026-05-20T08:00:01.000Z [WARN]: 数据库有 1 个待执行的迁移
+2026-05-20T08:00:02.000Z [ERROR]: 服务器启动失败: Error: ...
+```
+
+## 数据库初始化
 
 首次启动后，应用会自动执行数据库迁移和种子数据初始化。
 

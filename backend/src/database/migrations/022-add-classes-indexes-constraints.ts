@@ -4,7 +4,6 @@ import type { MigrationContext } from "../umzug.js";
 
 const INDEXES = {
   cohort: "classes_cohort_idx",
-  graduated: "classes_graduated_idx",
   uniqueClassName: "classes_cohort_class_name_unique",
 };
 
@@ -25,25 +24,34 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
     throw new Error("classes 表存在重复的 cohort/class_name，无法添加唯一约束");
   }
 
-  await queryInterface.addIndex("classes", ["cohort"], {
-    name: INDEXES.cohort,
-  });
+  await queryInterface.sequelize.query(`
+    CREATE INDEX IF NOT EXISTS ${INDEXES.cohort} ON classes (cohort)
+  `);
 
-  await queryInterface.addIndex("classes", ["graduated"], {
-    name: INDEXES.graduated,
-  });
-
-  await queryInterface.addConstraint("classes", {
-    fields: ["cohort", "class_name"],
-    type: "unique",
-    name: INDEXES.uniqueClassName,
-  });
+  await queryInterface.sequelize.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = '${INDEXES.uniqueClassName}'
+          AND conrelid = 'classes'::regclass
+      ) THEN
+        ALTER TABLE classes
+          ADD CONSTRAINT ${INDEXES.uniqueClassName}
+          UNIQUE (cohort, class_name);
+      END IF;
+    END $$;
+  `);
 };
 
 export const down: MigrationFn<MigrationContext> = async (params) => {
   const { queryInterface } = params.context;
 
-  await queryInterface.removeConstraint("classes", INDEXES.uniqueClassName);
-  await queryInterface.removeIndex("classes", INDEXES.graduated);
-  await queryInterface.removeIndex("classes", INDEXES.cohort);
+  await queryInterface.sequelize.query(
+    `ALTER TABLE classes DROP CONSTRAINT IF EXISTS ${INDEXES.uniqueClassName}`,
+  );
+  await queryInterface.sequelize.query(
+    `DROP INDEX IF EXISTS ${INDEXES.cohort}`,
+  );
 };

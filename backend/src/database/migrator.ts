@@ -1,5 +1,8 @@
 import { migrator, seeder } from './umzug.js';
 import { testConnection } from './connection.js';
+import { installConsoleLogger } from '../utils/logger.js';
+
+installConsoleLogger();
 
 const command = process.argv[2];
 const type = process.argv[3] || 'migration'; // 'migration' 或 'seed'
@@ -8,7 +11,7 @@ async function main() {
   // 先测试数据库连接
   const connected = await testConnection();
   if (!connected) {
-    console.error('❌ 数据库连接失败，退出');
+    console.error('数据库连接失败，退出');
     process.exit(1);
   }
 
@@ -19,41 +22,41 @@ async function main() {
     switch (command) {
       case 'up':
       case 'migrate':
-        console.log(`⏫ 执行${typeName}...`);
+        console.log(`执行${typeName}...`);
         await executor.up();
-        console.log(`✅ ${typeName}执行成功`);
+        console.log(`${typeName}执行成功`);
         break;
 
       case 'down':
       case 'rollback':
-        console.log(`⏬ 回滚${typeName}...`);
+        console.log(`回滚${typeName}...`);
         await executor.down({ step: 1 });
-        console.log(`✅ ${typeName}回滚成功`);
+        console.log(`${typeName}回滚成功`);
         break;
 
       case 'reset':
-        console.log(`🔄 重置所有${typeName}...`);
+        console.log(`重置所有${typeName}...`);
         await executor.down({ to: 0 as any });
-        console.log(`✅ 所有${typeName}已重置`);
+        console.log(`所有${typeName}已重置`);
         break;
 
       case 'status':
       case 'pending':
-        console.log(`📋 ${typeName}状态:\n`);
+        console.log(`${typeName}状态:\n`);
         const pending = await executor.pending();
         const executed = await executor.executed();
 
         console.log(`已执行 (${executed.length}):`);
-        executed.forEach((m) => console.log(`  ✅ ${m.name}`));
+        executed.forEach((m) => console.log(`  已执行 ${m.name}`));
 
         console.log(`\n待执行 (${pending.length}):`);
-        pending.forEach((m) => console.log(`  ⏳ ${m.name}`));
+        pending.forEach((m) => console.log(`  待执行 ${m.name}`));
         break;
 
       case 'executed':
         const executedList = await executor.executed();
         console.log(`已执行的${typeName} (${executedList.length}):`);
-        executedList.forEach((m) => console.log(`  ✅ ${m.name}`));
+        executedList.forEach((m) => console.log(`  已执行 ${m.name}`));
         break;
 
       default:
@@ -84,7 +87,7 @@ async function main() {
         process.exit(0);
     }
   } catch (error) {
-    console.error(`❌ ${typeName}执行失败:`, error);
+    console.error(`${typeName}执行失败:`, error);
     process.exit(1);
   }
 

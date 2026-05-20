@@ -1,11 +1,27 @@
-import { Umzug, SequelizeStorage } from 'umzug';
+import { Umzug, SequelizeStorage, type MigrationFn } from 'umzug';
 import { Sequelize, QueryInterface, DataTypes } from 'sequelize';
 import sequelize from './connection.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+import { fileURLToPath, pathToFileURL } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const getRuntimeDirname = () => {
+  if (typeof __dirname === 'string') return __dirname;
+  return path.dirname(fileURLToPath(import.meta.url));
+};
+const __runtimeDirname = getRuntimeDirname();
+const isPackagedExecutable = Boolean((process as NodeJS.Process & { pkg?: unknown }).pkg);
+const isBundledPkgEntry = path.basename(__runtimeDirname) === 'dist-pkg';
+const databaseDir = isPackagedExecutable || isBundledPkgEntry
+  ? path.join(__runtimeDirname, 'database')
+  : __runtimeDirname;
+const migrationExtension = isPackagedExecutable || isBundledPkgEntry
+  ? '.js'
+  : path.extname(databaseDir.includes('\\dist\\') || databaseDir.includes('/dist/') ? 'index.js' : 'index.ts');
+const shouldRequireMigrationFiles = isPackagedExecutable || isBundledPkgEntry;
+const requireMigrationFile = createRequire(
+  typeof __filename === 'string' ? __filename : import.meta.url,
+);
 
 // 迁移上下文类型
 export interface MigrationContext {
@@ -15,12 +31,25 @@ export interface MigrationContext {
   sequelize: Sequelize;
 }
 
+type MigrationModule = {
+  up: MigrationFn<MigrationContext>;
+  down?: MigrationFn<MigrationContext>;
+};
+
+const loadMigrationModule = async (filePath: string): Promise<MigrationModule> => {
+  if (shouldRequireMigrationFiles) {
+    return requireMigrationFile(filePath) as MigrationModule;
+  }
+
+  return import(pathToFileURL(filePath).href) as Promise<MigrationModule>;
+};
+
 // 创建迁移器实例
 export const migrator = new Umzug<MigrationContext>({
   migrations: {
-    glob: ['migrations/*.ts', { cwd: __dirname }],
+    glob: [`migrations/*${migrationExtension}`, { cwd: databaseDir }],
     resolve: (params) => {
-      const getModule = () => import(`file://${params.path}`);
+      const getModule = () => loadMigrationModule(params.path!);
       return {
         name: params.name,
         path: params.path,
@@ -51,9 +80,9 @@ export const migrator = new Umzug<MigrationContext>({
 // 创建种子数据器实例
 export const seeder = new Umzug<MigrationContext>({
   migrations: {
-    glob: ['seeders/*.ts', { cwd: __dirname }],
+    glob: [`seeders/*${migrationExtension}`, { cwd: databaseDir }],
     resolve: (params) => {
-      const getModule = () => import(`file://${params.path}`);
+      const getModule = () => loadMigrationModule(params.path!);
       return {
         name: params.name,
         path: params.path,

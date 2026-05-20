@@ -24,7 +24,7 @@ export const up: MigrationFn<MigrationContext> = async (params) => {
   await queryInterface.removeColumn('classes', 'graduation_year');
   console.log('✓ 删除 graduation_year 字段');
 
-  console.log('✅ 毕业状态字段已改为虚拟计算字段');
+  console.log('毕业状态字段已改为虚拟计算字段');
   console.log('   现在班级的毕业状态将根据 cohort 字段自动计算');
   console.log('   配置文件: backend/src/config/school.ts');
 };
